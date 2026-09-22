@@ -1,0 +1,23 @@
+{
+  "name": "corbel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File corbel.ps1",
+    "backend": "powershell -NoProfile -ExecutionPolicy Bypass -File corbel.ps1 -BackendOnly"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "^5.5.4",
+    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.4.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

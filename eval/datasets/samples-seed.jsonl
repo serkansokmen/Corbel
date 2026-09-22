@@ -1,0 +1,16 @@
+{"id":"seed-a01","split":"calibration","category":"answerable","query":"What time does the installation open and close?","gold":[{"documentId":"sample-operations","quote":"The installation opens daily at 09:00 and closes at 19:00."}]}
+{"id":"seed-a02","split":"test","category":"answerable","query":"How often does the installation try to reconnect when the OSC connection is lost?","gold":[{"documentId":"sample-operations","quote":"It attempts to reconnect every 5 seconds."}]}
+{"id":"seed-a03","split":"calibration","category":"answerable","query":"How long are visitor captures stored?","gold":[{"documentId":"sample-capture","quote":"Visitor captures are stored locally for 24 hours and then automatically deleted."}]}
+{"id":"seed-a04","split":"test","category":"answerable","query":"How many jobs can the print queue hold?","gold":[{"documentId":"sample-capture","quote":"The print queue is limited to 12 jobs."}]}
+{"id":"seed-a05","split":"calibration","category":"answerable","query":"What resolution does the display wall run at?","gold":[{"documentId":"sample-hardware","quote":"The display wall runs at 3840 by 1080 pixels at 60 Hz."}]}
+{"id":"seed-a06","split":"test","category":"answerable","query":"Which UDP port does the tablet send OSC messages to?","gold":[{"documentId":"sample-hardware","quote":"The tablet sends OSC messages to UDP port 9000."}]}
+{"id":"seed-p01","split":"calibration","category":"paraphrased","query":"After an electricity cut, does somebody have to boot the media PC by hand?","gold":[{"documentId":"sample-operations","quote":"The playback computer starts automatically after power is restored."}]}
+{"id":"seed-p02","split":"test","category":"paraphrased","query":"How big are the images visitors get, in pixels?","gold":[{"documentId":"sample-capture","quote":"Captures are rendered at 2400 by 3600 pixels and saved as PNG files."}]}
+{"id":"seed-p03","split":"calibration","category":"paraphrased","query":"Are photos of guests ever sent to the cloud?","gold":[{"documentId":"sample-capture","quote":"No captures are uploaded to a remote service."}]}
+{"id":"seed-p04","split":"test","category":"paraphrased","query":"How much memory does the show machine have?","gold":[{"documentId":"sample-hardware","quote":"The exhibition uses a Windows playback computer with 16 GB of RAM and an NVIDIA graphics card."}]}
+{"id":"seed-u01","split":"calibration","category":"unanswerable","query":"Does the installation support facial recognition?","gold":[]}
+{"id":"seed-u02","split":"test","category":"unanswerable","query":"What is the model number of the printer?","gold":[]}
+{"id":"seed-u03","split":"calibration","category":"unanswerable","query":"How many visitors can the installation serve per hour?","gold":[]}
+{"id":"seed-u04","split":"test","category":"unanswerable","query":"Which port does the printer listen on?","gold":[]}
+{"id":"seed-u05","split":"calibration","category":"unanswerable","query":"Who is the artist behind the exhibition?","gold":[]}
+{"id":"seed-u06","split":"test","category":"unanswerable","query":"How long does a single print job take to complete?","gold":[]}

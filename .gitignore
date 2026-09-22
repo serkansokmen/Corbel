@@ -1,0 +1,13 @@
+node_modules/
+.svelte-kit/
+build/
+.venv/
+.cache/
+.env
+.backend.env
+.backend-venv/
+__pycache__/
+*.log
+_workspace/
+_workspace_*/
+.claude/worktrees/

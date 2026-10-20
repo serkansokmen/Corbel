@@ -48,6 +48,7 @@ A corpus spec is a comma-separated list: `samples` (the app's sample corpus) and
    ```bash
    node .claude/skills/corbel-eval/scripts/compare.mjs --a _workspace/eval/seed-baseline --b _workspace/eval/seed-after --threshold 0.8
    ```
+   `run.json` records the chunker (`HEADING_IN_PASSAGE`, `CHUNK_TARGET`, `CHUNK_MAX`, a hash of `retrieval.ts`) and `startedAt`; compare warns when the two runs differ there or did not record it. Contradictory questions are listed when the number of accepted sides changes, not only the top passage.
 
 ## Rules that keep the numbers honest
 

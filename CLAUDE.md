@@ -9,3 +9,4 @@
 | --- | --- | --- | --- |
 | 2026-10-20 | Initial Harness v2 setup | All | - |
 | 2026-10-20 | Contract map: body limit, error envelope and env rows | corbel-contracts | Match the fixes in 49fa6be |
+| 2026-10-20 | Chunker config in run.json, conflict flips in compare, heading-quote warnings, both-sides recall@K | corbel-eval | Gaps found measuring heading-aware chunking (QA F6, F11) |

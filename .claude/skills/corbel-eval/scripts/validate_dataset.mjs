@@ -1,12 +1,12 @@
 // Mechanical checks on a labeled question set before any inference is spent on it.
 //   node .claude/skills/corbel-eval/scripts/validate_dataset.mjs --dataset eval/datasets/samples-seed.jsonl [--corpus samples] [--json]
 // Errors (exit 1) make results meaningless. Warnings flag questions that measure something other than intended.
-import { args, loadCorpus, loadJsonl, goldSpan, importApp, CATEGORIES, SPLITS } from './lib.mjs';
+import { args, loadCorpus, loadJsonl, goldSpan, headingAt, importApp, CATEGORIES, SPLITS } from './lib.mjs';
 
 const opts = args();
 if (!opts.dataset) { console.error('Usage: validate_dataset.mjs --dataset <file.jsonl> [--corpus samples|<dir>] [--json]'); process.exit(2); }
 const docs = await loadCorpus(opts.corpus ?? 'samples');
-const { chunk } = await importApp('src/lib/server/retrieval.ts');
+const { chunk, HEADING_IN_PASSAGE } = await importApp('src/lib/server/retrieval.ts');
 const stop = new Set('a an the is are was were be been being to of and or in on at for by with it its as from this that what when how does do can we i you'.split(' '));
 const words = (t) => new Set((t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => !stop.has(w)));
 
@@ -39,7 +39,10 @@ for (const r of rows) {
     if (typeof g.quote !== 'string' || !g.quote.trim()) { err(r, 'gold quote must be a non-empty string'); continue; }
     const span = goldSpan(doc, g.quote);
     if (!span) { err(r, `gold quote not found in ${doc.id}: "${g.quote.slice(0, 60)}"`); continue; }
+    const heading = headingAt(doc, span);
     if (span.normalizedOnly) warn(r, `gold quote matches ${doc.id} only after whitespace/case normalisation`);
+    else if (heading)
+      warn(r, `gold quote relies on the Markdown heading "${heading.text.slice(0, 60)}" in ${doc.id}; passages show heading text only when HEADING_IN_PASSAGE allows it (now '${HEADING_IN_PASSAGE}'), so this question tests the chunker setting. Quote body text instead`);
     else if (!chunk(doc).some((c) => c.offset <= span.start && c.offset + c.text.length >= span.end))
       warn(r, `gold quote spans a chunk boundary in ${doc.id}; no single passage can contain it, so this question tests chunking`);
   }

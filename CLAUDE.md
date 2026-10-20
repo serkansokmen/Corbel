@@ -10,3 +10,4 @@
 | 2026-10-20 | Initial Harness v2 setup | All | - |
 | 2026-10-20 | Contract map: body limit, error envelope and env rows | corbel-contracts | Match the fixes in 49fa6be |
 | 2026-10-20 | Contract map: shared `src/lib/limits.ts`, production env/bind rows, Run export threshold rule | corbel-contracts, corbel-eval, corbel-harness | Audit fixes B1, M1-M4 and minors |
+| 2026-10-20 | Contract map: UI side of Question length and Documents rows | corbel-contracts | UI guards and localStorage restore use limits.ts |

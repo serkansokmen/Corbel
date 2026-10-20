@@ -135,7 +135,8 @@ With `LAYA_HOST=127.0.0.1` no API key is needed.
 
 - 30 documents, 50,000 characters each, 200,000 characters total, 1 MB request body. The production server (`node --env-file=.env build/index.js`) needs `BODY_SIZE_LIMIT=1M` for this; its default is 512 KB. These limits, and the question, Top-K and threshold limits below, live in `src/lib/limits.ts`, which `/api/query` and the evaluation scripts share.
 - Up to 8 candidate passages per question (the UI offers 2, 4, 6 or 8; the API accepts 1 to 8). Acceptance threshold 0.50 to 0.99.
-- Questions up to 500 characters.
+- Questions up to 500 characters. Document titles up to 150 characters.
+- A library saved in this browser that is outside these limits (for example, hand-edited) is not loaded. The sample corpus is shown with a notice instead and replaces the saved library on the next save.
 - Runs are kept in browser storage, 20 most recent. Use Export runs for a JSON file that includes evaluated passages, scores, model revision, settings, and timings. Each run's `threshold` is the one stored with it (the threshold it was run at, or last reviewed at). Exporting a single run from the workbench also records the slider value on screen (`viewedThreshold`) and the ids of the passages accepted at it (`acceptedIds`).
 - The sample corpus describes a fictional exhibition installation. Sample documents are flagged in the library and can be removed.
 

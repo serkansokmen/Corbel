@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
   import { samples, exampleQuestions } from '$lib/samples';
-  import type { Document, Run, Health } from '$lib/types';
+  import type { Document, Run, Health, ExportedRun } from '$lib/types';
 
   let tab = $state('workbench');
   let documents = $state<Document[]>(structuredClone(samples));
@@ -73,8 +73,10 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, documents, threshold, topK }), signal: abort.signal
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'The query failed.');
+      let result;
+      try { result = await response.json(); } catch (cause) { if (!(cause instanceof SyntaxError)) throw cause; result = null; } // a reverse proxy's plain-text or HTML error page (e.g. a proxy 413 or 502)
+      if (!response.ok) throw new Error(typeof result?.error === 'string' ? result.error : response.status === 413 ? "The document library exceeds the server's request size limit (413). If it is under 1 MB, start the production server with BODY_SIZE_LIMIT=1M." : `The query failed (HTTP ${response.status}). Check that the Corbel server is running and retry.`);
+      if (!result || !Array.isArray(result.evidence)) throw new Error('The Corbel server returned an unreadable response. Retry shortly.');
       activeRun = result;
       selectedEvidence = 0;
       runs = [result, ...runs].slice(0, 20);
@@ -101,8 +103,11 @@
     save();
   }
 
+  // Every exported run keeps its stored threshold (the one it was run or last reviewed at). A single-run export adds
+  // what the screen showed: the live slider value and the evidence ids accepted at it.
   function exportRuns(single = false) {
-    const payload = { format: 'corbel-runs-v1', exportedAt: new Date().toISOString(), retrieval: 'BM25 over paragraph-aligned chunks (target 320 characters, max 600)', calibration: 'Not calibrated on this corpus', runs: single && activeRun ? [{ ...activeRun, threshold }] : runs };
+    const exported: ExportedRun[] = single && activeRun ? [{ ...activeRun, viewedThreshold: threshold, acceptedIds: accepted.map((e) => e.id) }] : runs;
+    const payload = { format: 'corbel-runs-v1', exportedAt: new Date().toISOString(), retrieval: 'BM25 over paragraph-aligned chunks (target 320 characters, max 600)', calibration: 'Not calibrated on this corpus', runs: exported };
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
     const a = document.createElement('a');
     a.href = url;

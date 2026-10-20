@@ -23,7 +23,7 @@ Laya 0.3.5 (English checkpoint, ModernBERT encoder + decision head), CUDA
 Pipeline steps:
 
 1. **Chunk.** Documents are split on paragraph boundaries. Short paragraphs (headings, one-liners) are merged up to about 320 characters. Paragraphs over 600 characters are windowed at sentence boundaries with an 80-character overlap. Every chunk keeps its character offset into the source document. See `src/lib/server/retrieval.ts`.
-2. **Retrieve.** BM25 over the chunks with a small English stopword list. Top-K candidates (2 to 8) go to the backend. This is a lexical baseline; paraphrases can be missed.
+2. **Retrieve.** BM25 over the chunks with a small English stopword list. Top-K candidates go to the backend: the UI offers 2, 4, 6 or 8, and `/api/query` accepts any integer from 1 to 8. This is a lexical baseline; paraphrases can be missed.
 3. **Score.** The backend asks Laya one typed choice question per passage: does the passage explicitly contain enough information to answer the query? Options are `supported`, `partial`, `irrelevant`. All passages are batched into one forward pass.
 4. **Decide.** The UI accepts passages whose P(supported) meets the threshold slider (0.50 to 0.99). Threshold changes re-evaluate the current run instantly without another inference call.
 
@@ -51,13 +51,13 @@ Setup runs once. After that, `./corbel.ps1` is the only command you need: it sta
 
 Useful flags: `-Model multilingual` switches the checkpoint and records it in both env files, `-BackendOnly` leaves the backend running without the UI, `-Stop` kills whatever is on either port, and `-NoBrowser` skips opening a tab. `corbel.bat` wraps the same script for double-clicking.
 
-On first start it downloads about 800 MB of weights into the Hugging Face cache, warms up with one inference, and reports `ready` on `GET /health`. The backend refuses to bind to a non-loopback address without a key of at least 32 characters, and it refuses to fall back to CPU silently when `LAYA_DEVICE=cuda`.
+On first start it downloads about 800 MB of weights into the Hugging Face cache, warms up with one inference, and reports `ready` on `GET /health`. The backend refuses to bind to a non-loopback address without a key of at least 32 characters, refuses the placeholder key that older copies of `.backend.env.example` shipped (on any address), and it refuses to fall back to CPU silently when `LAYA_DEVICE=cuda`.
 
 The backend listens on TCP port 5177 by default. Allow that port through the Windows firewall for the private network profile only.
 
 ### SvelteKit app
 
-Requirements: Node 20 or later.
+Requirements: Node 20.19+ (Vite 7). The evaluation and contract scripts under `.claude/skills/` need Node 22.18+, because they import the app's `.ts` files with Node's type stripping.
 
 ```powershell
 npm install
@@ -85,10 +85,16 @@ npm run build
 ```
 
 ```powershell
-$env:BODY_SIZE_LIMIT='1M'; node build/index.js
+$env:BODY_SIZE_LIMIT='1M'; $env:HOST='127.0.0.1'; node --env-file=.env build/index.js
 ```
 
-Set `PORT` and `HOST` to change the default of `http://localhost:3000`. Keep `BODY_SIZE_LIMIT=1M` next to them: the Node adapter defaults to 512 KB, so without it a document library between 512 KB and 1 MB is rejected with `413` even though it is within the app's 1 MB limit. The header badge polls `/api/health` and shows `connected`, `loading`, `error`, or `offline`. The Run query button is disabled until the backend reports ready.
+The app is then at `http://127.0.0.1:3000`; set `PORT` to change the port. Each part of the command matters:
+
+- `--env-file=.env`: the built server does not read `.env` by itself (only `npm run dev` does). Without it, `LAYA_API_KEY` and `LAYA_BACKEND_URL` are unset: a backend with a key answers `401`, and a UI on a separate machine calls `http://127.0.0.1:5177` instead of the workstation. Node stops with an error if `.env` is missing.
+- `HOST=127.0.0.1`: the Node adapter binds `0.0.0.0` (every network interface) by default. `/api/*` has no login of its own and attaches the server-held `LAYA_API_KEY` to every backend call, so binding to any other address lets anyone who can reach the port run queries on your GPU backend. Change it only behind your own authentication.
+- `BODY_SIZE_LIMIT=1M`: the Node adapter defaults to 512 KB, so without it a document library between 512 KB and 1 MB is rejected with `413` even though it is within the app's 1 MB limit.
+
+The header badge polls `/api/health` and shows `connected`, `loading`, `error`, or `offline`. The Run query button is disabled until the backend reports ready.
 
 ## Backend configuration
 
@@ -101,7 +107,7 @@ Set `PORT` and `HOST` to change the default of `http://localhost:3000`. Keep `BO
 | `LAYA_PRECISION` | `bf16` | `bf16`, `fp16`, or `fp32`. Only applied on CUDA via autocast. |
 | `LAYA_HOST` | `127.0.0.1` | Use `0.0.0.0` on the workstation to accept LAN clients |
 | `LAYA_PORT` | `5177` | |
-| `LAYA_API_KEY` | empty | Required for any non-loopback bind. Compared in constant time. |
+| `LAYA_API_KEY` | empty | Required for any non-loopback bind: a random key of at least 32 characters. `setup-backend.ps1` writes one only when `.backend.env` does not exist yet: to get a new one, delete `.backend.env` and rerun it, or set the key by hand. The old example placeholder `replace-with-a-random-shared-key` is refused. Compared in constant time. |
 | `LAYA_REVISION` | empty | Optional Hugging Face commit hash to pin the checkpoint |
 
 Endpoints:
@@ -127,9 +133,10 @@ With `LAYA_HOST=127.0.0.1` no API key is needed.
 
 ## Limits
 
-- 30 documents, 50,000 characters each, 200,000 characters total, 1 MB request body. The production server (`node build/index.js`) needs `BODY_SIZE_LIMIT=1M` for this; its default is 512 KB.
+- 30 documents, 50,000 characters each, 200,000 characters total, 1 MB request body. The production server (`node --env-file=.env build/index.js`) needs `BODY_SIZE_LIMIT=1M` for this; its default is 512 KB. These limits, and the question, Top-K and threshold limits below, live in `src/lib/limits.ts`, which `/api/query` and the evaluation scripts share.
+- Up to 8 candidate passages per question (the UI offers 2, 4, 6 or 8; the API accepts 1 to 8). Acceptance threshold 0.50 to 0.99.
 - Questions up to 500 characters.
-- Runs are kept in browser storage, 20 most recent. Use Export runs for a JSON file that includes evaluated passages, scores, model revision, settings, and timings.
+- Runs are kept in browser storage, 20 most recent. Use Export runs for a JSON file that includes evaluated passages, scores, model revision, settings, and timings. Each run's `threshold` is the one stored with it (the threshold it was run at, or last reviewed at). Exporting a single run from the workbench also records the slider value on screen (`viewedThreshold`) and the ids of the passages accepted at it (`acceptedIds`).
 - The sample corpus describes a fictional exhibition installation. Sample documents are flagged in the library and can be removed.
 
 ## What this does not do
@@ -148,6 +155,7 @@ src/lib/server/retrieval.ts  Chunking and BM25
 src/routes/api/query/+server.ts  Validation, retrieval, proxy to /score
 src/routes/api/health/+server.ts Health proxy
 src/routes/+page.svelte   The whole UI: workbench, library, experiment log, architecture
+src/lib/limits.ts         Request limits shared by /api/query and the eval scripts
 src/lib/samples.ts        Sample corpus and example questions
 ```
 

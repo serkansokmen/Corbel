@@ -7,7 +7,7 @@ description: "Measures how well Corbel cites or abstains on a labeled question s
 
 Corbel's README says the threshold is a coverage control, not a correctness guarantee, and that a real evaluation needs a fixed labeled question set with answerable, unanswerable, contradictory and paraphrased questions, split into calibration and test. This skill is that evaluation.
 
-Everything runs from the repository root. Scripts need Node 22.18+ because they import the app's own `retrieval.ts` and `samples.ts`, so the eval always chunks and ranks exactly like the app.
+Everything runs from the repository root. Scripts need Node 22.18+ because they import the app's own `retrieval.ts`, `samples.ts` and `limits.ts`, so the eval always chunks and ranks exactly like the app and rejects what `/api/query` would reject.
 
 ## Files
 
@@ -28,7 +28,7 @@ A corpus spec is a comma-separated list: `samples` (the app's sample corpus) and
    ```
    Add `--query "..."` to see what BM25 retrieves for one question.
 
-2. **Validate** before spending inference. Errors make metrics meaningless; warnings mean a question measures something else than intended (a gold quote split across chunks, a "paraphrase" that copies the source):
+2. **Validate** before spending inference. Errors make metrics meaningless (they include a corpus or query that `/api/query` would reject: the checks come from the app's `src/lib/limits.ts`, so 30 documents, 50,000 characters each, 200,000 total, unique ids up to 120 characters, titles up to 150, queries 1 to 500 characters); warnings mean a question measures something else than intended (a gold quote split across chunks, a "paraphrase" that copies the source):
    ```bash
    node .claude/skills/corbel-eval/scripts/validate_dataset.mjs --dataset eval/datasets/samples-seed.jsonl --corpus samples
    ```
@@ -37,7 +37,7 @@ A corpus spec is a comma-separated list: `samples` (the app's sample corpus) and
    ```bash
    node .claude/skills/corbel-eval/scripts/run_eval.mjs --dataset eval/datasets/samples-seed.jsonl --corpus samples --out _workspace/eval/seed-baseline
    ```
-   Options: `--topK 2..8` (default 8, so the threshold sweep sees the most candidates), `--via ui` to go through `/api/query` on the SvelteKit server and exercise `+server.ts` too, `--target-precision 0.9`.
+   Options: `--topK 1..8` (the API limit, checked before any inference; the UI offers 2/4/6/8; default 8, so the threshold sweep sees the most candidates), `--via ui` to go through `/api/query` on the SvelteKit server and exercise `+server.ts` too, `--target-precision 0.9`.
 
 4. **Read the summary** (`summary.md`, also printed). Metric definitions and how to read them are in `references/metrics.md`. Recompute without inference after editing the scripts or the target:
    ```bash

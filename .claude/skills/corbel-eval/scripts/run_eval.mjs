@@ -12,16 +12,23 @@ import { args, loadCorpus, loadJsonl, goldMatch, importApp, readEnv, root } from
 const opts = args();
 if (!opts.dataset || !opts.out) { console.error('Usage: run_eval.mjs --dataset <file.jsonl> --out <dir> [--corpus samples|<dir>] [--topK 8] [--via backend|ui] [--url <base>]'); process.exit(2); }
 const via = opts.via ?? 'backend';
-const topK = Number(opts.topK ?? 8);
+const topK = opts.topK === true ? NaN : Number(opts.topK ?? 8);
 const corpusSpec = opts.corpus ?? 'samples';
 const env = { ...readEnv('.env'), ...process.env };
 const base = (opts.url ?? (via === 'ui' ? 'http://127.0.0.1:5173' : env.LAYA_BACKEND_URL || 'http://127.0.0.1:5177')).replace(/\/$/, '');
 const headers = { 'Content-Type': 'application/json', ...(via === 'backend' && env.LAYA_API_KEY ? { Authorization: `Bearer ${env.LAYA_API_KEY}` } : {}) };
 
+// The /api/query limits apply to --via backend too, so both paths score the same kind of request.
+const { checkDocuments, checkTopK } = await importApp('src/lib/limits.ts');
+const topKError = checkTopK(topK);
+if (topKError) { console.error(`--topK: ${topKError} (the /api/query limit).`); process.exit(2); }
+
 const check = spawnSync(process.execPath, [path.join(import.meta.dirname, 'validate_dataset.mjs'), '--dataset', opts.dataset, '--corpus', corpusSpec], { cwd: root, encoding: 'utf8' });
 if (check.status !== 0) { console.error(check.stdout + check.stderr); console.error('Dataset failed validation; fix it before spending inference.'); process.exit(1); }
 
 const docs = await loadCorpus(corpusSpec);
+const corpusError = checkDocuments(docs);
+if (corpusError) { console.error(`Corpus "${corpusSpec}": ${corpusError} (the /api/query limit).`); process.exit(1); }
 const { retrieve } = await importApp('src/lib/server/retrieval.ts');
 const questions = loadJsonl(opts.dataset);
 

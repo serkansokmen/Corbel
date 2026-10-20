@@ -26,4 +26,7 @@ export type Run = {
   chunkCount: number;
   review?: 'correct' | 'incorrect';
 };
+// Export format corbel-runs-v1. `threshold` is always the stored Run threshold; a single-run export adds the slider
+// value on screen (`viewedThreshold`) and the ids of the evidence accepted at it (`acceptedIds`).
+export type ExportedRun = Run & { viewedThreshold?: number; acceptedIds?: string[] };
 export type Health = { status: 'ready' | 'loading' | 'error' | 'offline'; model?: string; device?: string; message?: string; gpu?: string | null; location?: string; precision?: string };

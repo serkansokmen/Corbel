@@ -21,9 +21,9 @@ It runs three steps and prints a PASS/FAIL summary (exit 1 on any failure):
 |---|---|---|
 | `npm run check` | Svelte and TypeScript type-check | package.json |
 | retrieval invariants | Chunks map back to their source by offset, stay ≤ `CHUNK_MAX` and within backend limits, ids are unique, windows cover long paragraphs, `retrieve` returns ≤ topK positive scores in order, stopword-only queries never call Laya | `scripts/retrieval.test.mjs` |
-| backend contract smoke | `/score` and `/health` shapes match `src/lib/types.ts`; 401/403/413/422/429/503 guards; truncation flag; the worst-case request SvelteKit can send (8 × `CHUNK_MAX` CJK chars) fits the 32 KB body limit | `scripts/contract_smoke.py` (fake Laya agent, drives the ASGI app directly; no httpx needed) |
+| backend contract smoke | `/score` and `/health` shapes match `src/lib/types.ts`; 401/403/413/422/429/503 guards; truncation flag; the worst-case request SvelteKit can send (8 × `CHUNK_MAX` CJK chars) fits the 32 KB body limit; `serve.py` start-up key guard and `.backend.env.example` key | `scripts/contract_smoke.py` (fake Laya agent, drives the ASGI app directly; no httpx needed) |
 
-Requirements: Node 22.18+ (the tests import `.ts` files via type stripping) and `.backend-venv` with fastapi. `--skip-typecheck` skips svelte-check for a faster loop.
+Requirements: Node 22.18+ (the tests import `.ts` files via type stripping; the app itself needs Node 20.19+) and `.backend-venv` with fastapi. `--skip-typecheck` skips svelte-check for a faster loop.
 
 The suite cannot see UI rendering, the export file, or anything that depends on real model probabilities. Say so when reporting; for model behaviour use `corbel-eval`.
 
@@ -37,13 +37,14 @@ When you change a row, change every file in it, then run verify. Line numbers dr
 
 | Contract | Value | Enforced in | Must agree with |
 |---|---|---|---|
-| Question length | 500 chars | `api/query/+server.ts` (`query.length > 500`), `backend/app.py` `ScoreRequest.query` | `+page.svelte` textarea `maxlength="500"`, README Limits |
-| Candidates per query | 1–8 | `+server.ts` (`topK > 8`), `app.py` `passages max_length=8` | UI select `[2, 4, 6, 8]`, README |
-| Threshold | 0.50–0.99 | `+server.ts` | UI slider `min="0.5" max="0.99"`, README, eval `metrics.mjs` grid |
-| Documents | 30 docs, 50,000 chars each, 200,000 total | `+server.ts` | `+page.svelte` add/import guards and localStorage restore (`<= 30`), `maxlength="50000"`, README |
-| SvelteKit body | 1 MB | `+server.ts` (content-length check + streaming reader, both 413) | adapter-node `BODY_SIZE_LIMIT` (default 512K; production must run with `BODY_SIZE_LIMIT=1M`, caught as 413 in `+server.ts`), README |
+| Question length | 500 chars | `src/lib/limits.ts` `QUERY_MAX` / `checkQuery` (used by `api/query/+server.ts` and eval `validate_dataset.mjs`), `backend/app.py` `ScoreRequest.query` | `+page.svelte` textarea `maxlength="500"`, README Limits |
+| Candidates per query | 1–8 | `limits.ts` `TOP_K_MAX` / `checkTopK` (used by `+server.ts` and `run_eval.mjs --topK`, checked before any inference), `app.py` `passages max_length=8` | UI select `[2, 4, 6, 8]`; README says "UI offers 2/4/6/8, API accepts 1–8" (Pipeline step 2 and Limits); smoke test reads `TOP_K_MAX` from `limits.ts` |
+| Threshold | 0.50–0.99 | `limits.ts` `checkThreshold` (used by `+server.ts`) | UI slider `min="0.5" max="0.99"`, README, eval `metrics.mjs` grid |
+| Documents | 30 docs, 50,000 chars each, 200,000 total, unique ids, non-empty text | `limits.ts` `checkDocuments` (used by `+server.ts`, `validate_dataset.mjs` as a corpus-level error, `run_eval.mjs` before the health check) | `+page.svelte` add/import guards and localStorage restore (`<= 30`), `maxlength="50000"`, README |
+| SvelteKit body | 1 MB | `limits.ts` `BODY_MAX`, applied in `+server.ts` (content-length check + streaming reader, both 413) | adapter-node `BODY_SIZE_LIMIT` (default 512K; production must run with `BODY_SIZE_LIMIT=1M`, caught as 413 in `+server.ts`), README |
+| Production bind address | `127.0.0.1` | adapter-node `HOST` env (default `0.0.0.0`); nothing in code enforces it | README production command `$env:BODY_SIZE_LIMIT='1M'; $env:HOST='127.0.0.1'; node --env-file=.env build/index.js` and its explanation: `/api/*` has no auth and attaches the server-held `LAYA_API_KEY`, so any other bind exposes the GPU backend to whoever reaches the port |
 | Passage text | ≤ 1000 chars (backend), chunks ≤ `CHUNK_MAX` = 600 | `app.py` `Passage.text`, `retrieval.ts` | README Pipeline step 1, retrieval test |
-| Passage id / documentId / title | 180 / 120 / 150 | `app.py` `Passage` | `+server.ts` document checks (id 120, title 150); chunk id = `${doc.id}:${offset}` must stay ≤ 180 |
+| Passage id / documentId / title | 180 / 120 / 150 | `app.py` `Passage` | `limits.ts` `DOCUMENT_ID_MAX` 120 / `DOCUMENT_TITLE_MAX` 150 via `checkDocuments`; chunk id = `${doc.id}:${offset}` must stay ≤ 180 (smoke test builds its worst case from these constants) |
 | Backend body | 32 KB | `app.py` `authenticate` middleware | worst case from `CHUNK_MAX` × 8 (smoke test computes it) |
 | Token budget | `max_len − head_max_len − 16` tokens | `app.py` `score_passages` (binary-search truncation) | `truncated` flag shown in UI and exported |
 | Inference concurrency | 1 (else 429) | `app.py` `inference_lock` | `+server.ts` passes status through; eval `run_eval.mjs` retries 429 |
@@ -55,11 +56,11 @@ When you change a row, change every file in it, then run verify. Line numbers dr
 |---|---|---|
 | `Passage` | `retrieval.ts` `chunk()` | `app.py` `Passage` model, `types.ts` |
 | `Evidence` = Passage + `probability, decision, distribution, evaluatedText, truncated` | `app.py` `score_passages` | `types.ts`, `+page.svelte` (candidate list, inspector, `accepted`), export, eval `goldMatch` |
-| `Run` | `+server.ts` (`base` + spread of the `/score` response + `latencyMs`) | `types.ts`, `+page.svelte`, localStorage `corbel-v1`, export `corbel-runs-v1` |
+| `Run` | `+server.ts` (spread of the `/score` response, then `base`, then `latencyMs`: app-owned `id, query, createdAt, threshold, topK, corpusSize, chunkCount` win over backend fields) | `types.ts`, `+page.svelte`, localStorage `corbel-v1`, export `corbel-runs-v1`. `threshold` is the stored threshold: set at query time, overwritten with the slider by `review()` (a review records the threshold the judgement was made at). Run log tag and bulk export use it. Single-run export (`ExportedRun` in `types.ts`) writes the stored run unchanged plus `viewedThreshold` (live slider) and `acceptedIds` (evidence ids with `probability >= viewedThreshold`), which match the workbench `accepted` list |
 | `Health` | `app.py` `state` + `/api/health` adds `location` | `types.ts`, header badge |
 | Label set `supported / partial / irrelevant` | `backend/batch.py` `SUPPORT_QUESTION.criteria` (order matters: logits `[:, :3]` are zipped with it) | `app.py` reads `distribution['supported']`, UI distribution bars, eval scripts |
-| Error envelope | backend `{detail}` (string, but an array for FastAPI 422s and plain text for uvicorn's concurrency 503), SvelteKit `{error}` | `+server.ts` parses defensively, forwards `detail` only when it is a string, returns 502 for an unreadable success body; UI reads `result.error` |
-| Env | `.backend.env` read by `backend/serve.py` (repo root only); `.env` read by SvelteKit | `corbel.ps1` creates `.env` if missing and copies `LAYA_API_KEY` and `LAYA_BACKEND_URL` into it (not with `-BackendOnly`); `.env.example`, `.backend.env.example`, `setup-backend.ps1`, README tables |
+| Error envelope | backend `{detail}` (string, but an array for FastAPI 422s and plain text for uvicorn's concurrency 503), SvelteKit `{error}` | `+server.ts` parses defensively, forwards `detail` only when it is a string, returns 502 for an unreadable success body; its catch-all returns 413 for an adapter-node body-limit error, 400 only for malformed JSON (`SyntaxError`) and for a client disconnect (`request.signal.aborted` or `ECONNRESET`, not logged), 500 (logged, generic message) for anything else; limit violations return 400 with `LIMITS_MESSAGE`. UI reads `result.error` and tolerates a non-JSON body (a reverse proxy's plain-text or HTML error page, e.g. a proxy 413 or 502): it shows a status-based message instead of a parse error |
+| Env | `.backend.env` read by `backend/serve.py` (repo root only); `.env` read by SvelteKit in dev only, the production build reads it only through `node --env-file=.env build/index.js` | `corbel.ps1` creates `.env` if missing and copies `LAYA_API_KEY` and `LAYA_BACKEND_URL` into it (not with `-BackendOnly`); `.env.example`, `.backend.env.example` (empty `LAYA_API_KEY`), `setup-backend.ps1` (writes a random key), README tables. `serve.py` `bind_error` refuses the old placeholder `replace-with-a-random-shared-key` on any host and a key under 32 chars on a non-loopback host (smoke-tested) |
 
 Persisted data has no migration path. Renaming a `Run` or `Evidence` field breaks runs already in users' localStorage and in exported JSON. Either keep the old name readable or bump `corbel-v1` / `corbel-runs-v1` and handle the old shape on load.
 

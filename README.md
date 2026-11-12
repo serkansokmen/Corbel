@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/serkansokmen/Corbel/actions/workflows/ci.yml/badge.svg)](https://github.com/serkansokmen/Corbel/actions/workflows/ci.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Corbel is a local document Q&A workbench built around [Laya](https://huggingface.co/convaiinnovations/laya), a decision model that scores a fixed answer space instead of generating text. You load plain-text or Markdown documents, ask a question, and the app returns verbatim source passages that Laya judges as supporting the answer. If nothing clears the acceptance threshold, it abstains. No language model writes the displayed answer.
+Corbel is a local document Q&A workbench built around [Laya](https://huggingface.co/convaiinnovations/laya), an open-source, non-autoregressive System 1 decision model from Convai Innovations (Apache 2.0). Laya scores a fixed answer space instead of generating text. You load plain-text or Markdown documents, ask a question, and the app returns verbatim source passages that Laya judges as supporting the answer. If nothing clears the acceptance threshold, it abstains. No language model writes the displayed answer.
 
 The point of the project is to inspect the decision, not to hide it: every candidate passage, its BM25 score, the full supported / partial / irrelevant distribution, the exact text the model evaluated, and the timing are visible and exportable.
 

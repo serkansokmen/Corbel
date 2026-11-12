@@ -6,4 +6,4 @@ In short: be respectful, assume good faith, criticise code and ideas rather than
 
 ## Reporting
 
-Report unacceptable behaviour to the maintainer privately, through the contact options on the [maintainer's GitHub profile](https://github.com/serkansokmen). Reports are kept confidential. The maintainer may remove comments, close threads or block accounts that break these rules.
+Report unacceptable behaviour to the maintainer, Etem Serkan Sökmen, privately, through the contact options on the [maintainer's GitHub profile](https://github.com/serkansokmen). Reports are kept confidential. The maintainer may remove comments, close threads or block accounts that break these rules.

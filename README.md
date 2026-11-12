@@ -222,4 +222,4 @@ Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers 
 
 ## License
 
-Corbel is licensed under the [Apache License 2.0](LICENSE). The Laya model weights are downloaded from Hugging Face at first start and carry their own Apache-2.0 license; they are not part of this repository.
+Corbel is written and maintained by Etem Serkan Sökmen ([@serkansokmen](https://github.com/serkansokmen)) and licensed under the [Apache License 2.0](LICENSE). The Laya model weights are downloaded from Hugging Face at first start and carry their own Apache-2.0 license; they are not part of this repository.

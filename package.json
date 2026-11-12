@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Local document Q&A workbench that cites verbatim passages judged by the Laya decision model, or abstains.",
   "license": "Apache-2.0",
+  "author": "Etem Serkan Sökmen (https://github.com/serkansokmen)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/serkansokmen/Corbel.git"

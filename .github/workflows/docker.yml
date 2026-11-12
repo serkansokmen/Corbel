@@ -33,10 +33,10 @@ jobs:
           echo "backend ports: $backend"
           echo "ui ports: $ui"
           # No host binding for the backend, and only a loopback one for the UI.
-          ! echo "$backend" | grep -q '"HostPort"'
+          # (An "if" rather than "! cmd": bash -e does not stop on a negated command.)
+          if echo "$backend" | grep -q '"HostPort"'; then echo "backend is published on the host"; exit 1; fi
           echo "$ui" | grep -q '"HostIp":"127.0.0.1"'
-          ! echo "$ui" | grep -q '"HostIp":"0.0.0.0"'
-          ! echo "$ui" | grep -q '"HostIp":"::"'
+          if echo "$ui" | grep -Eq '"HostIp":"(0\.0\.0\.0|::)"'; then echo "ui is published beyond loopback"; exit 1; fi
       # First start downloads about 800 MB of weights and loads them on CPU.
       - name: Wait for the model to report ready
         run: |

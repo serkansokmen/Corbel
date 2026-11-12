@@ -19,6 +19,8 @@
 
 A candidate passage counts as gold when its evaluated text contains the quote (whitespace and case normalised). Keep quotes short, one sentence where possible, so that any passage containing the fact matches. A quote that spans two passages can never match, and the validator warns about it.
 
+Gold quotes must not rely on Markdown heading text (`## Fire alarm`, `## Who opens the gallery?`). Whether a passage shows its heading depends on `HEADING_IN_PASSAGE` in `retrieval.ts`: in `'never'` no passage contains it, so the question looks like a retrieval miss; in `'question'` only question headings are shown. Headings still count for BM25 either way. Quote the body sentence that states the fact. The validator warns when a quote overlaps a heading line, and `run_eval.mjs` labels candidates from that heading's section `heading` (failure kind `heading-quote`) instead of a miss.
+
 ## Categories
 
 **answerable**: the corpus states the answer in one passage, and the question uses the corpus's own vocabulary. Measures the easy case: retrieval should find it, Laya should accept it.

@@ -18,8 +18,10 @@ Every rate is reported as value, k/n and a 95% Wilson interval.
 ## Threshold-free
 
 - **Recall@K**: share of non-unanswerable questions where any candidate (before thresholding) contains a gold quote. The ceiling for coverage: no threshold can accept a passage BM25 never retrieved.
+- **Both sides retrieved** (`conflictRecallAtK`): share of contradictory questions whose candidates contain at least two gold quotes. The ceiling for conflicts surfaced. `compare.mjs` computes it from `results.jsonl`, so it also works for older runs.
 - **No candidates**: questions where BM25 found no term overlap, so Laya was not called.
 - **Partial only**: a candidate overlaps the gold quote's span but does not contain it, a chunking problem.
+- **Heading only**: the gold quote lies in a Markdown heading line and no passage shows it (`HEADING_IN_PASSAGE`); a candidate from that heading's section was retrieved. A dataset problem; see `dataset-format.md`.
 - **Truncated gold**: a gold-bearing candidate was cut to fit the token budget.
 
 ## Calibration (passage level)
@@ -36,6 +38,7 @@ On the calibration split, the smallest t whose shown-evidence precision ≥ targ
 |---|---|---|
 | `retrieval-miss` | Answerable, abstained, no candidate contains the gold | Retrieval |
 | `chunk-split` | As above, but a candidate overlaps the gold span | Chunking |
+| `heading-quote` | As above, but the gold quote is heading text the passages do not show, and a candidate from that section was retrieved | Dataset (quote the body instead) |
 | `below-threshold` | Gold candidate was scored but under t; record has its probability, rank and distribution | Decision (or chunking if `partial` dominates) |
 | `wrong-evidence` | Answered, but the top accepted passage is not gold | Decision |
 | `false-answer` | Unanswerable, but something was accepted | Decision |

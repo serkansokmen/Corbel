@@ -11,3 +11,4 @@
 | 2026-10-20 | Contract map: body limit, error envelope and env rows | corbel-contracts | Match the fixes in 49fa6be |
 | 2026-10-20 | Contract map: shared `src/lib/limits.ts`, production env/bind rows, Run export threshold rule | corbel-contracts, corbel-eval, corbel-harness | Audit fixes B1, M1-M4 and minors |
 | 2026-10-20 | Contract map: UI side of Question length and Documents rows | corbel-contracts | UI guards and localStorage restore use limits.ts |
+| 2026-10-20 | Chunker config in run.json, conflict flips in compare, heading-quote warnings, both-sides recall@K | corbel-eval | Gaps found measuring heading-aware chunking (QA F6, F11) |

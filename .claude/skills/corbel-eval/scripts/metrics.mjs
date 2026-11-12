@@ -3,7 +3,7 @@
 // Writes metrics.json, failures.jsonl and summary.md next to the results file. No inference.
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { args, loadJsonl, root } from './lib.mjs';
+import { args, goldCovered, loadJsonl, root } from './lib.mjs';
 
 const opts = args();
 if (!opts.results) { console.error('Usage: metrics.mjs --results <results.jsonl> [--target-precision 0.9]'); process.exit(2); }
@@ -23,11 +23,7 @@ function wilson(k, n) {
 }
 const rate = (k, n) => ({ k, n, value: n ? Math.round((k / n) * 1000) / 1000 : null, ci95: wilson(k, n) });
 
-function conflictSurfaced(r, accepted) {
-  const covered = new Set();
-  for (const c of accepted) r.gold.forEach((g, i) => { if (c.documentId === g.documentId && c.gold === 'full' && c.evaluatedText.replace(/\s+/g, ' ').toLowerCase().includes(g.quote.replace(/\s+/g, ' ').toLowerCase())) covered.add(i); });
-  return covered.size >= 2;
-}
+const conflictSurfaced = (r, accepted) => goldCovered(r, accepted).size >= 2;
 
 function at(set, t) {
   const A = set.filter(seeking), U = set.filter((r) => r.category === 'unanswerable'), C = set.filter((r) => r.category === 'contradictory');
@@ -59,10 +55,13 @@ function calibration(set) {
 }
 
 function retrieval(set) {
-  const S = set.filter((r) => r.category !== 'unanswerable');
+  const S = set.filter((r) => r.category !== 'unanswerable'), C = set.filter((r) => r.category === 'contradictory');
+  const noFull = (r) => !r.candidates.some((c) => c.gold === 'full');
   return {
     recallAtK: rate(S.filter((r) => r.candidates.some((c) => c.gold === 'full')).length, S.length),
-    partialOnly: S.filter((r) => !r.candidates.some((c) => c.gold === 'full') && r.candidates.some((c) => c.gold === 'partial')).map((r) => r.id),
+    conflictRecallAtK: rate(C.filter((r) => conflictSurfaced(r, r.candidates)).length, C.length),
+    partialOnly: S.filter((r) => noFull(r) && r.candidates.some((c) => c.gold === 'partial')).map((r) => r.id),
+    headingOnly: S.filter((r) => noFull(r) && r.candidates.some((c) => c.gold === 'heading')).map((r) => r.id),
     noCandidates: set.filter((r) => !r.candidates.length).map((r) => r.id),
     truncatedGold: set.filter((r) => r.candidates.some((c) => c.truncated && c.gold !== 'none')).map((r) => r.id)
   };
@@ -79,7 +78,7 @@ function failures(set, t) {
     if (r.category === 'unanswerable') { if (accepted.length) out.push({ ...base, kind: 'false-answer', top }); continue; }
     if (r.category === 'contradictory') { if (!conflictSurfaced(r, accepted)) out.push({ ...base, kind: 'conflict-missed', acceptedGold: accepted.filter((c) => c.gold === 'full').length }); continue; }
     if (!accepted.length) {
-      if (!gold) out.push({ ...base, kind: r.candidates.some((c) => c.gold === 'partial') ? 'chunk-split' : 'retrieval-miss', candidates: r.candidates.length });
+      if (!gold) out.push({ ...base, kind: r.candidates.some((c) => c.gold === 'partial') ? 'chunk-split' : r.candidates.some((c) => c.gold === 'heading') ? 'heading-quote' : 'retrieval-miss', candidates: r.candidates.length });
       else out.push({ ...base, kind: 'below-threshold', goldProbability: gold.probability, goldRank: goldRank + 1, goldDistribution: gold.distribution });
     } else if (accepted[0].gold !== 'full') out.push({ ...base, kind: 'wrong-evidence', top, goldRank: goldRank >= 0 ? goldRank + 1 : null, goldProbability: gold?.probability ?? null });
   }
@@ -127,8 +126,10 @@ const md = [
   `## Retrieval (threshold-free)`, '',
   `- Recall@K, calibration: ${pct(metrics.retrieval.calibration.recallAtK)}`,
   `- Recall@K, test: ${pct(metrics.retrieval.test.recallAtK)}`,
+  `- Both sides retrieved (contradictory), calibration: ${pct(metrics.retrieval.calibration.conflictRecallAtK)}; test: ${pct(metrics.retrieval.test.conflictRecallAtK)}`,
   `- No candidates at all (Laya not called): ${[...metrics.retrieval.calibration.noCandidates, ...metrics.retrieval.test.noCandidates].join(', ') || 'none'}`,
   `- Gold only partially inside a chunk: ${[...metrics.retrieval.calibration.partialOnly, ...metrics.retrieval.test.partialOnly].join(', ') || 'none'}`,
+  `- Gold quote only in a heading line the passages do not show: ${[...metrics.retrieval.calibration.headingOnly, ...metrics.retrieval.test.headingOnly].join(', ') || 'none'}`,
   `- Gold candidate truncated by the token budget: ${[...metrics.retrieval.calibration.truncatedGold, ...metrics.retrieval.test.truncatedGold].join(', ') || 'none'}`, '',
   `## Calibration of P(supported), passage level`, '',
   `- Calibration split: ECE ${metrics.calibration.calibration.ece ?? 'n/a'}, Brier ${metrics.calibration.calibration.brier ?? 'n/a'}, ${metrics.calibration.calibration.n} passages`,

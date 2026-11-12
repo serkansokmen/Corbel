@@ -4,7 +4,8 @@
 // --via backend (default): app retrieval code + POST /score on LAYA_BACKEND_URL from .env.
 // --via ui: POST /api/query on the SvelteKit server (default http://127.0.0.1:5173), exercising +server.ts too.
 // One inference per question; thresholds are swept afterwards by metrics.mjs from the stored probabilities.
-import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { args, loadCorpus, loadJsonl, goldMatch, importApp, readEnv, root } from './lib.mjs';
@@ -29,7 +30,10 @@ if (check.status !== 0) { console.error(check.stdout + check.stderr); console.er
 const docs = await loadCorpus(corpusSpec);
 const corpusError = checkDocuments(docs);
 if (corpusError) { console.error(`Corpus "${corpusSpec}": ${corpusError} (the /api/query limit).`); process.exit(1); }
-const { retrieve } = await importApp('src/lib/server/retrieval.ts');
+const { retrieve, HEADING_IN_PASSAGE, CHUNK_TARGET, CHUNK_MAX } = await importApp('src/lib/server/retrieval.ts');
+// The chunker this run used. With --via ui the server runs its own copy of retrieval.ts; this records the checkout's.
+const retrievalSha256 = createHash('sha256').update(readFileSync(path.join(root, 'src/lib/server/retrieval.ts'))).digest('hex').slice(0, 16);
+const chunker = { headingInPassage: HEADING_IN_PASSAGE ?? null, chunkTarget: CHUNK_TARGET ?? null, chunkMax: CHUNK_MAX ?? null, retrievalSha256 };
 const questions = loadJsonl(opts.dataset);
 
 const health = await fetch(`${base}${via === 'ui' ? '/api/health' : '/health'}`, { headers, signal: AbortSignal.timeout(5000) }).then((r) => r.json()).catch((e) => ({ status: 'offline', message: e.message }));
@@ -50,7 +54,7 @@ const outDir = path.resolve(root, opts.out);
 mkdirSync(outDir, { recursive: true });
 const resultsFile = path.join(outDir, 'results.jsonl');
 writeFileSync(resultsFile, '');
-writeFileSync(path.join(outDir, 'run.json'), JSON.stringify({ dataset: opts.dataset, corpus: corpusSpec, documents: docs.length, topK, via, backend: base.replace(/\/\/[^/@]*@/, '//'), health }, null, 2));
+writeFileSync(path.join(outDir, 'run.json'), JSON.stringify({ startedAt: new Date().toISOString(), dataset: opts.dataset, corpus: corpusSpec, documents: docs.length, topK, via, chunker, backend: base.replace(/\/\/[^/@]*@/, '//'), health }, null, 2));
 
 let failed = 0;
 for (const [i, q] of questions.entries()) {

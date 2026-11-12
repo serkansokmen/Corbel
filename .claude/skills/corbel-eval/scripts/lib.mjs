@@ -60,7 +60,20 @@ export function goldSpan(doc, quote) {
   return n >= 0 ? { start: -1, end: -1, normalizedOnly: true } : null;
 }
 
-// How a scored passage relates to the gold quotes: 'full' contains one, 'partial' overlaps one, 'none'.
+// Markdown heading lines of a document, as character ranges (same pattern as retrieval.ts).
+export function headingLines(text) {
+  return [...text.matchAll(/^[ \t]*#{1,6}[ \t][^\r\n]*/gm)].map((m) => ({ start: m.index, end: m.index + m[0].length, text: m[0].trim() }));
+}
+
+// The heading line a gold span overlaps, or null. Whether a passage shows heading text depends on
+// HEADING_IN_PASSAGE, so a quote that relies on it measures the chunker setting, not the answer.
+export function headingAt(doc, span) {
+  if (!span || span.start < 0) return null;
+  return headingLines(doc.text).find((h) => h.start < span.end && h.end > span.start) ?? null;
+}
+
+// How a scored passage relates to the gold quotes: 'full' contains one, 'partial' overlaps one,
+// 'heading' sits in the section of a heading line that holds the quote (but does not show it), 'none'.
 export function goldMatch(candidate, gold, docs) {
   let best = 'none';
   for (const g of gold) {
@@ -70,8 +83,19 @@ export function goldMatch(candidate, gold, docs) {
     const span = doc && goldSpan(doc, g.quote);
     const end = candidate.offset + (candidate.evaluatedText ?? candidate.text).length;
     if (span && span.start >= 0 && candidate.offset < span.end && end > span.start) best = 'partial';
+    const heading = best === 'none' && doc && headingAt(doc, span);
+    if (heading && candidate.offset >= heading.end && !headingLines(doc.text).some((h) => h.start >= heading.end && h.start < candidate.offset)) best = 'heading';
   }
   return best;
+}
+
+// Indices of gold quotes that some 'full' candidate contains. A conflict counts when two or more are covered.
+export function goldCovered(record, candidates) {
+  const covered = new Set();
+  for (const c of candidates) record.gold.forEach((g, i) => {
+    if (c.documentId === g.documentId && c.gold === 'full' && normalize(c.evaluatedText ?? c.text).includes(normalize(g.quote))) covered.add(i);
+  });
+  return covered;
 }
 
 export function readEnv(file) {

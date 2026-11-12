@@ -2,7 +2,13 @@
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
   import { samples, exampleQuestions } from '$lib/samples';
-  import type { Document, Run, Health } from '$lib/types';
+  import type { Document, Run, Health, ExportedRun } from '$lib/types';
+  import { QUERY_MAX, DOCUMENTS_MAX, DOCUMENT_CHARS_MAX, CORPUS_CHARS_MAX, DOCUMENT_TITLE_MAX, checkDocuments, checkQuery } from '$lib/limits';
+
+  const libraryLimits = `${DOCUMENTS_MAX} documents, ${DOCUMENT_CHARS_MAX.toLocaleString('en-US')} characters each, ${CORPUS_CHARS_MAX.toLocaleString('en-US')} characters total`;
+  const documentCharsMax = DOCUMENT_CHARS_MAX.toLocaleString('en-US');
+  // C0 controls other than tab, LF, CR, backspace and form feed mean binary. Each JSON-escapes to 6 bytes, so enough of them push a library that passes checkDocuments past BODY_MAX.
+  const binaryControls = /[\u0000-\u0007\u000B\u000E-\u001F]/;
 
   let tab = $state('workbench');
   let documents = $state<Document[]>(structuredClone(samples));
@@ -47,7 +53,9 @@
       const saved = localStorage.getItem('corbel-v1');
       if (saved) {
         const data = JSON.parse(saved);
-        if (Array.isArray(data.documents) && data.documents.length <= 30 && data.documents.every((d: Document) => typeof d.id === 'string' && typeof d.title === 'string' && typeof d.text === 'string')) documents = data.documents;
+        // Same check as /api/query, so a stored library the server would reject never loads. An emptied library ([]) is a valid UI state.
+        const reason = Array.isArray(data.documents) && !data.documents.length ? null : checkDocuments(data.documents);
+        if (reason) storageNotice = `Saved documents were not loaded because they are outside the library limits (${libraryLimits}). The sample corpus is loaded instead and replaces them on the next save.`; else documents = data.documents;
         if (Array.isArray(data.runs)) runs = data.runs.filter((r: Run) => typeof r.query === 'string' && Array.isArray(r.evidence)).slice(0, 20);
       }
     } catch { storageNotice = 'Saved browser data could not be loaded. The sample corpus is available.'; }
@@ -62,7 +70,7 @@
   });
 
   async function ask() {
-    if (busy || !query.trim() || !documents.length) return;
+    if (busy || checkQuery(query) || !documents.length) return; // checkQuery also stops an over-long query that openRun set from a stored run
     error = '';
     busy = true;
     activeRun = null;
@@ -73,8 +81,10 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, documents, threshold, topK }), signal: abort.signal
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'The query failed.');
+      let result;
+      try { result = await response.json(); } catch (cause) { if (!(cause instanceof SyntaxError)) throw cause; result = null; } // a reverse proxy's plain-text or HTML error page (e.g. a proxy 413 or 502)
+      if (!response.ok) throw new Error(typeof result?.error === 'string' ? result.error : response.status === 413 ? "The document library exceeds the server's request size limit (413). If it is under 1 MB, start the production server with BODY_SIZE_LIMIT=1M." : `The query failed (HTTP ${response.status}). Check that the Corbel server is running and retry.`);
+      if (!result || !Array.isArray(result.evidence)) throw new Error('The Corbel server returned an unreadable response. Retry shortly.');
       activeRun = result;
       selectedEvidence = 0;
       runs = [result, ...runs].slice(0, 20);
@@ -101,8 +111,11 @@
     save();
   }
 
+  // Every exported run keeps its stored threshold (the one it was run or last reviewed at). A single-run export adds
+  // what the screen showed: the live slider value and the evidence ids accepted at it.
   function exportRuns(single = false) {
-    const payload = { format: 'corbel-runs-v1', exportedAt: new Date().toISOString(), retrieval: 'BM25 over paragraph-aligned chunks (target 320 characters, max 600)', calibration: 'Not calibrated on this corpus', runs: single && activeRun ? [{ ...activeRun, threshold }] : runs };
+    const exported: ExportedRun[] = single && activeRun ? [{ ...activeRun, viewedThreshold: threshold, acceptedIds: accepted.map((e) => e.id) }] : runs;
+    const payload = { format: 'corbel-runs-v1', exportedAt: new Date().toISOString(), retrieval: 'BM25 over paragraph-aligned chunks (target 320 characters, max 600)', calibration: 'Not calibrated on this corpus', runs: exported };
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
     const a = document.createElement('a');
     a.href = url;
@@ -115,10 +128,11 @@
     const title = documentTitle.trim();
     const text = documentText.trim();
     if (!title || !text) return;
-    if (documents.length >= 30 || text.length > 50_000 || documents.reduce((n, d) => n + d.text.length, 0) + text.length > 200_000) {
-      error = 'Library limit reached: 30 documents, 50,000 characters each, 200,000 characters total.'; return;
-    }
-    documents = [...documents, { id: crypto.randomUUID(), title, text }];
+    if (binaryControls.test(text)) { error = 'This document contains binary control characters.'; return; }
+    if (text.length > DOCUMENT_CHARS_MAX) { error = `This document is over ${documentCharsMax} characters.`; return; }
+    const next = [...documents, { id: crypto.randomUUID(), title, text }];
+    if (checkDocuments(next)) { error = `Adding this document would exceed the library limit: ${libraryLimits}.`; return; }
+    documents = next;
     documentTitle = ''; documentText = ''; addingDocument = false; error = '';
     save();
   }
@@ -127,11 +141,16 @@
     const input = event.target as HTMLInputElement;
     error = '';
     for (const file of Array.from(input.files ?? [])) {
-      if (!/\.(txt|md)$/i.test(file.name) || file.size > 200_000) { error = 'Import plain .txt or .md files up to 50,000 characters each.'; continue; }
+      // Byte prefilter before reading: UTF-8 needs at most 3 bytes per UTF-16 unit (plus a 3-byte BOM), so 4x is a safe margin above DOCUMENT_CHARS_MAX.
+      if (!/\.(txt|md)$/i.test(file.name) || file.size > DOCUMENT_CHARS_MAX * 4) { error = `Import plain .txt or .md files up to ${documentCharsMax} characters each.`; continue; }
       try {
         const text = await file.text();
-        if (!text.trim() || text.includes('\u0000') || text.length > 50_000 || documents.length >= 30 || documents.reduce((n, d) => n + d.text.length, 0) + text.length > 200_000) { error = `Could not import ${file.name}: empty, binary, or over the library limit.`; continue; }
-        documents = [...documents, { id: crypto.randomUUID(), title: file.name.slice(0, 150), text }];
+        if (!text.trim() || binaryControls.test(text)) { error = `Could not import ${file.name}: empty or binary.`; continue; }
+        if (text.length > DOCUMENT_CHARS_MAX) { error = `Could not import ${file.name}: over ${documentCharsMax} characters.`; continue; }
+        // Drop a high surrogate the cut left unpaired: the backend rejects invalid Unicode with 422.
+        const next = [...documents, { id: crypto.randomUUID(), title: file.name.slice(0, DOCUMENT_TITLE_MAX).replace(/[\uD800-\uDBFF]$/, ''), text }];
+        if (checkDocuments(next)) { error = `Could not import ${file.name}: it would exceed the library limit (${libraryLimits}).`; continue; }
+        documents = next;
       } catch { error = `Could not read ${file.name}.`; }
     }
     input.value = ''; save();
@@ -186,8 +205,8 @@
           <div class="query-column">
             <section class="panel query-panel"><div class="panel-heading"><h2><Icon name="search" size={18} />Ask a question</h2><span class="tag">DOCUMENT Q&A</span></div>
               <form onsubmit={(e) => { e.preventDefault(); void ask(); }}>
-                <label class="sr-only" for="query">Question</label><textarea id="query" class="question-input" bind:value={query} maxlength="500" rows="3" placeholder="What would you like to know?" disabled={busy}></textarea>
-                <div class="query-controls"><span><Icon name="file" size={14} />{documents.length} documents in scope</span><button class="button primary" type="submit" disabled={busy || !query.trim() || !documents.length || health.status !== 'ready'}>{busy ? 'Evaluating…' : 'Run query'}{#if busy}<span class="spinner"></span>{:else}<Icon name="arrow" size={17} />{/if}</button></div>
+                <label class="sr-only" for="query">Question</label><textarea id="query" class="question-input" bind:value={query} maxlength={QUERY_MAX} rows="3" placeholder="What would you like to know?" disabled={busy}></textarea>
+                <div class="query-controls"><span><Icon name="file" size={14} />{documents.length} documents in scope</span><button class="button primary" type="submit" disabled={busy || !!checkQuery(query) || !documents.length || health.status !== 'ready'}>{busy ? 'Evaluating…' : 'Run query'}{#if busy}<span class="spinner"></span>{:else}<Icon name="arrow" size={17} />{/if}</button></div>
               </form>
               <div class="examples"><span>TRY A QUESTION</span>{#each exampleQuestions as example}<button onclick={() => query = example} disabled={busy}>{example}<Icon name="arrow" size={13} /></button>{/each}</div>
             </section>
@@ -217,9 +236,9 @@
         </div>
         <div class="pipeline-strip"><span class="tiny-label">YOUR PIPELINE</span><span><b>01</b> Documents</span><Icon name="arrow" size={14} /><span><b>02</b> BM25 retrieval</span><Icon name="arrow" size={14} /><span><b>03</b> Laya decisions</span><Icon name="arrow" size={14} /><span><b>04</b> Cited excerpts</span><button onclick={() => tab = 'architecture'} aria-label="Inspect pipeline architecture"><Icon name="external" size={15} /></button></div>
       {:else if tab === 'library'}
-        <div class="library-toolbar"><span>{documents.length} / 30 documents · {(documents.reduce((n, d) => n + d.text.length, 0) / 1000).toFixed(1)}k / 200k characters</span><div><button class="button secondary" onclick={() => fileInput?.click()}><Icon name="download" size={16} />Import files</button><button class="button primary" onclick={() => addingDocument = !addingDocument}><Icon name="plus" size={16} />Paste document</button></div></div>
+        <div class="library-toolbar"><span>{documents.length} / {DOCUMENTS_MAX} documents · {(documents.reduce((n, d) => n + d.text.length, 0) / 1000).toFixed(1)}k / {CORPUS_CHARS_MAX / 1000}k characters</span><div><button class="button secondary" onclick={() => fileInput?.click()}><Icon name="download" size={16} />Import files</button><button class="button primary" onclick={() => addingDocument = !addingDocument}><Icon name="plus" size={16} />Paste document</button></div></div>
         <input class="sr-only" type="file" accept=".txt,.md" multiple bind:this={fileInput} onchange={importFiles} aria-label="Import text or Markdown documents" />
-        {#if addingDocument}<form class="panel document-form" onsubmit={(e) => { e.preventDefault(); addDocument(); }}><h2>Add a source</h2><label for="doc-title">Document title</label><input id="doc-title" bind:value={documentTitle} maxlength="150" required placeholder="e.g. Installation specification.md" /><label for="doc-text">Source text</label><textarea id="doc-text" bind:value={documentText} rows="8" maxlength="50000" required placeholder="Paste the complete source text…"></textarea><div class="form-actions"><button class="button secondary" type="button" onclick={() => addingDocument = false}>Cancel</button><button class="button primary">Add document</button></div></form>{/if}
+        {#if addingDocument}<form class="panel document-form" onsubmit={(e) => { e.preventDefault(); addDocument(); }}><h2>Add a source</h2><label for="doc-title">Document title</label><input id="doc-title" bind:value={documentTitle} maxlength={DOCUMENT_TITLE_MAX} required placeholder="e.g. Installation specification.md" /><label for="doc-text">Source text</label><textarea id="doc-text" bind:value={documentText} rows="8" maxlength={DOCUMENT_CHARS_MAX} required placeholder="Paste the complete source text…"></textarea><div class="form-actions"><button class="button secondary" type="button" onclick={() => addingDocument = false}>Cancel</button><button class="button primary">Add document</button></div></form>{/if}
         <div class="notice"><Icon name="file" size={18} />Plain text and Markdown only. Documents stay in this browser and are sent to your configured backend when you run a query. Sample documents describe a fictional installation.</div>
         <div class="document-grid">{#each documents as doc}<article class="panel document-card"><div class="document-card-top"><span class="document-icon"><Icon name="file" size={25} /></span><span class="tag">{doc.sample ? 'SAMPLE' : 'LOCAL'}</span></div><h2>{doc.title}</h2><p>{doc.text.slice(0, 160)}…</p><div class="document-card-bottom"><span>{doc.text.length.toLocaleString()} characters</span><button onclick={() => previewDocument = doc}>Read source <Icon name="arrow" size={14} /></button><button class="icon-button" aria-label={`Remove ${doc.title}`} onclick={() => removeDocument(doc.id)}><Icon name="close" size={16} /></button></div></article>{/each}</div>
         {#if !documents.length}<div class="panel empty-result"><h3>Your library is empty</h3><p>Import a text file or paste a document to start.</p><button class="button secondary" onclick={() => { documents = structuredClone(samples); save(); }}>Load sample documents</button></div>{/if}

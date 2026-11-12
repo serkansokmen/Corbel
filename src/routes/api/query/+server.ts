@@ -1,13 +1,14 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { retrieve } from '$lib/server/retrieval';
+import { BODY_MAX, checkQueryRequest, LIMITS_MESSAGE } from '$lib/limits';
 import type { Document } from '$lib/types';
 
 export async function POST({ request, fetch }) {
   const started = performance.now();
   const tooLarge = () => json({ error: 'The document library exceeds the 1 MB request limit.' }, { status: 413 });
   try {
-    if (Number(request.headers.get('content-length')) > 1_000_000) return tooLarge();
+    if (Number(request.headers.get('content-length')) > BODY_MAX) return tooLarge();
     const reader = request.body?.getReader();
     if (!reader) return json({ error: 'A request body is required.' }, { status: 400 });
     let bytes = 0;
@@ -17,18 +18,13 @@ export async function POST({ request, fetch }) {
       const { value, done } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > 1_000_000) return tooLarge(); // no reader.cancel(): it destroys the socket before the 413 is written
+      if (bytes > BODY_MAX) return tooLarge(); // no reader.cancel(): it destroys the socket before the 413 is written
       body += decoder.decode(value, { stream: true });
     }
     body += decoder.decode();
     const input = JSON.parse(body);
-    const { query, documents, threshold, topK } = input;
-    if (typeof query !== 'string' || !query.trim() || query.length > 500 || !Array.isArray(documents) || documents.length < 1 || documents.length > 30 ||
-        typeof threshold !== 'number' || !Number.isFinite(threshold) || threshold < 0.5 || threshold > 0.99 || !Number.isInteger(topK) || topK < 1 || topK > 8 ||
-        documents.some((d: Document) => !d || typeof d.id !== 'string' || d.id.length > 120 || typeof d.title !== 'string' || d.title.length > 150 || typeof d.text !== 'string' || !d.text.trim() || d.text.length > 50_000) ||
-        new Set(documents.map((d: Document) => d.id)).size !== documents.length || documents.reduce((n: number, d: Document) => n + d.text.length, 0) > 200_000) {
-      return json({ error: 'Check the question and document limits: 500 characters, 30 documents, 50,000 characters per document, 200,000 total.' }, { status: 400 });
-    }
+    if (checkQueryRequest(input)) return json({ error: LIMITS_MESSAGE }, { status: 400 });
+    const { query, documents, threshold, topK } = input as { query: string; documents: Document[]; threshold: number; topK: number };
     const { passages, chunkCount } = retrieve(documents, query.trim(), topK);
     const base = { id: crypto.randomUUID(), query: query.trim(), createdAt: new Date().toISOString(), threshold, topK, corpusSize: documents.length, chunkCount };
     if (!passages.length) return json({ ...base, evidence: [], latencyMs: Math.round(performance.now() - started), inferenceMs: 0, model: 'not run', revision: '', device: '', sdkVersion: '' });
@@ -45,9 +41,12 @@ export async function POST({ request, fetch }) {
     try { result = await response.json(); } catch { result = null; }
     if (!response.ok) return json({ error: typeof result?.detail === 'string' ? result.detail : 'Laya could not score these passages.' }, { status: response.status });
     if (!result || typeof result !== 'object' || !Array.isArray(result.evidence)) return json({ error: 'The Laya service returned an unreadable response. Check the backend log and retry.' }, { status: 502 });
-    return json({ ...base, ...result, latencyMs: Math.round(performance.now() - started) });
+    return json({ ...result, ...base, latencyMs: Math.round(performance.now() - started) }); // app-owned fields win over backend ones
   } catch (error) {
     if ((error as { status?: number } | null)?.status === 413) return json({ error: "The document library exceeds the server's request size limit (1 MB). If it is under 1 MB, start the production server with BODY_SIZE_LIMIT=1M." }, { status: 413 });
-    return json({ error: 'The request could not be processed. Check the input and retry.' }, { status: 400 });
+    if (error instanceof SyntaxError) return json({ error: 'The request body is not valid JSON. Check the input and retry.' }, { status: 400 });
+    if (request.signal.aborted || (error as { code?: string } | null)?.code === 'ECONNRESET') return json({ error: 'The request was interrupted before it was read. Retry.' }, { status: 400 }); // client went away: not a server bug
+    console.error('POST /api/query failed:', error);
+    return json({ error: 'The query failed on the server. Check the server log and retry.' }, { status: 500 });
   }
 }

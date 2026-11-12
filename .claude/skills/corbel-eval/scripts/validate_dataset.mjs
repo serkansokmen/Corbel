@@ -7,6 +7,7 @@ const opts = args();
 if (!opts.dataset) { console.error('Usage: validate_dataset.mjs --dataset <file.jsonl> [--corpus samples|<dir>] [--json]'); process.exit(2); }
 const docs = await loadCorpus(opts.corpus ?? 'samples');
 const { chunk } = await importApp('src/lib/server/retrieval.ts');
+const { checkDocuments, checkQuery } = await importApp('src/lib/limits.ts'); // the same limits /api/query enforces
 const stop = new Set('a an the is are was were be been being to of and or in on at for by with it its as from this that what when how does do can we i you'.split(' '));
 const words = (t) => new Set((t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => !stop.has(w)));
 
@@ -17,6 +18,8 @@ const err = (r, m) => errors.push(`line ${r._line}${r.id ? ` (${r.id})` : ''}: $
 const warn = (r, m) => warnings.push(`line ${r._line}${r.id ? ` (${r.id})` : ''}: ${m}`);
 const seen = new Set();
 const counts = {};
+const corpusError = checkDocuments(docs);
+if (corpusError) errors.push(`corpus "${opts.corpus ?? 'samples'}": ${corpusError} (the /api/query limit)`);
 
 for (const r of rows) {
   if (r._parseError) { err(r, `invalid JSON: ${r._parseError}`); continue; }
@@ -24,7 +27,8 @@ for (const r of rows) {
   else if (seen.has(r.id)) err(r, 'duplicate id'); else seen.add(r.id);
   if (!SPLITS.includes(r.split)) err(r, `split must be one of ${SPLITS.join(', ')}`);
   if (!CATEGORIES.includes(r.category)) err(r, `category must be one of ${CATEGORIES.join(', ')}`);
-  if (typeof r.query !== 'string' || !r.query.trim() || r.query.length > 500) err(r, 'query must be 1 to 500 characters (the API limit)');
+  const queryError = checkQuery(r.query);
+  if (queryError) err(r, `${queryError} (the API limit)`);
   if (!Array.isArray(r.gold)) { err(r, 'gold must be an array'); continue; }
   const key = `${r.category}/${r.split}`;
   counts[key] = (counts[key] ?? 0) + 1;

@@ -98,10 +98,13 @@ async def main():
     run_fields = ts_fields(types_ts, 'Run')
     health_fields = ts_fields(types_ts, 'Health')
     retrieval_ts = (ROOT / 'src/lib/server/retrieval.ts').read_text(encoding='utf-8')
-    query_ts = (ROOT / 'src/routes/api/query/+server.ts').read_text(encoding='utf-8')
+    limits_ts = (ROOT / 'src/lib/limits.ts').read_text(encoding='utf-8')  # /api/query limits, shared with the eval scripts
     app_py = (ROOT / 'backend/app.py').read_text(encoding='utf-8')
     chunk_max = int(re.search(r'CHUNK_MAX = (\d+)', retrieval_ts).group(1))
-    top_k_max = int(re.search(r'topK > (\d+)', query_ts).group(1))
+    top_k_max = int(re.search(r'TOP_K_MAX = (\d+)', limits_ts).group(1))
+    id_max = int(re.search(r'DOCUMENT_ID_MAX = (\d+)', limits_ts).group(1))
+    title_max = int(re.search(r'DOCUMENT_TITLE_MAX = (\d+)', limits_ts).group(1))
+    offset_max = int(re.search(r'DOCUMENT_CHARS_MAX = ([\d_]+)', limits_ts).group(1).replace('_', '')) - 1
     backend_max = int(re.search(r'passages: list\[Passage\] = Field\([^)]*max_length=(\d+)', app_py).group(1))
 
     status, body = await call('GET', '/health')
@@ -154,8 +157,8 @@ async def main():
     # The largest request SvelteKit can legally send must pass every backend limit.
     check(f'SvelteKit topK max ({top_k_max}) <= backend passage max ({backend_max})', top_k_max <= backend_max)
     cjk = '文'
-    worst = {'query': cjk * 500, 'passages': [{'id': cjk * 120 + ':49999', 'documentId': cjk * 120, 'title': cjk * 150,
-                                               'text': cjk * chunk_max, 'offset': 49_999, 'lexicalScore': 123.456789012345}
+    worst = {'query': cjk * 500, 'passages': [{'id': cjk * id_max + f':{offset_max}', 'documentId': cjk * id_max, 'title': cjk * title_max,
+                                               'text': cjk * chunk_max, 'offset': offset_max, 'lexicalScore': 123.456789012345}
                                               for _ in range(top_k_max)]}
     worst_bytes = len(json.dumps(worst, ensure_ascii=False).encode('utf-8'))
     check(f'worst-case SvelteKit request ({top_k_max} x CHUNK_MAX={chunk_max} CJK chars, {worst_bytes} bytes) fits the 32 KB backend limit', worst_bytes <= 32_768, worst_bytes)
@@ -178,6 +181,20 @@ async def main():
         check('correct bearer token from a remote client returns 200', status == 200, status)
     finally:
         backend_app.api_key = ''
+
+    # serve.py's start-up guard, called directly (uvicorn is not started).
+    import backend.serve as serve
+    placeholder = serve.PLACEHOLDER_KEY
+    check('serve.py refuses the old example placeholder key on a remote bind', serve.bind_error('0.0.0.0', placeholder) is not None)
+    check('serve.py refuses the old example placeholder key on a loopback bind', serve.bind_error('127.0.0.1', placeholder) is not None)
+    check('serve.py refuses a remote bind with a 31-character key', serve.bind_error('0.0.0.0', 'k' * 31) is not None)
+    check('serve.py allows a remote bind with a 32-character key', serve.bind_error('0.0.0.0', 'k' * 32) is None)
+    check('serve.py allows a loopback bind without a key', serve.bind_error('127.0.0.1', '') is None)
+    example = dict(line.split('=', 1) for line in (ROOT / '.backend.env.example').read_text(encoding='utf-8').splitlines()
+                   if line.strip() and not line.startswith('#') and '=' in line)
+    example_host, example_key = example.get('LAYA_HOST', '127.0.0.1').strip(), example.get('LAYA_API_KEY', '').strip()
+    check('.backend.env.example ships an empty LAYA_API_KEY', example_key == '', '(non-empty value, not shown)')
+    check('.backend.env.example copied as-is cannot open a remote bind', example_host in serve.LOOPBACK or serve.bind_error(example_host, example_key) is not None)
 
     print(f'\n{len(failures)} failure(s), {len(warnings)} warning(s)' if failures else f'\nAll backend contract checks passed ({len(warnings)} warning(s)).')
     return 1 if failures else 0

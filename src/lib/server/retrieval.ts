@@ -5,7 +5,8 @@ const tokens = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ??
 
 // Laya scores short, focused passages far better than long ones: a single distractor
 // paragraph in the same chunk can halve P(supported). Chunk on paragraph boundaries,
-// merging short paragraphs (one-liners) up to TARGET and windowing anything over MAX.
+// merging short paragraphs (one-liners) up to TARGET outside Markdown sections, only
+// content-free scraps inside them, and windowing anything over MAX.
 export const CHUNK_TARGET = 320;
 export const CHUNK_MAX = 600;
 const WINDOW_OVERLAP = 80;
@@ -16,7 +17,8 @@ const WINDOW_OVERLAP = 80;
 // raised it. 'never' keeps Passage.text body-only; 'question' starts a section's first chunk
 // at its heading when the heading ends in "?" and the slice still fits CHUNK_MAX.
 export const HEADING_IN_PASSAGE = 'never' as 'never' | 'question';
-const HEADING = /^#{1,6}[ \t]/;
+const HEADING = /^ {0,3}#{1,6}(?:[ \t\r]|$)/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const QUESTION = /\?[ \t#]*$/;
 
 function paragraphs(text: string) {
@@ -33,8 +35,14 @@ function paragraphs(text: string) {
 }
 
 function* windows(text: string, start: number, end: number) {
+  const blank = /\s*/y;
   let cursor = start;
   while (cursor < end) {
+    // Start each window on text, so two windows can never trim to the same offset (and id).
+    blank.lastIndex = cursor;
+    blank.exec(text);
+    cursor = Math.min(blank.lastIndex, end);
+    if (cursor >= end) break;
     let stop = Math.min(cursor + CHUNK_TARGET, end);
     if (stop < end) {
       const slice = text.slice(cursor, stop);
@@ -49,42 +57,61 @@ function* windows(text: string, start: number, end: number) {
   }
 }
 
-// Paragraphs, with heading lines at the start of a paragraph split off as their own blocks
-// (a heading followed directly by its body, with no blank line, still becomes two blocks).
+// Paragraphs, with every heading line split off as its own block, so a heading needs no
+// blank line around it. Lines inside ``` or ~~~ fences are never headings (shell comments).
 function blocks(text: string) {
   const out: { start: number; end: number; heading: boolean }[] = [];
-  for (let { start, end } of paragraphs(text)) {
-    for (;;) {
-      const lead = text.slice(start, end).search(/\S/);
-      if (lead < 0) break;
-      const newline = text.indexOf('\n', start + lead);
+  const body = (start: number, end: number) => { if (text.slice(start, end).trim()) out.push({ start, end, heading: false }); };
+  let fence = '';
+  for (const { start, end } of paragraphs(text)) {
+    let from = start;
+    for (let line = start; line < end; ) {
+      const newline = text.indexOf('\n', line);
       const lineEnd = newline < 0 || newline > end ? end : newline;
-      if (!HEADING.test(text.slice(start + lead, lineEnd))) { out.push({ start, end, heading: false }); break; }
-      out.push({ start: start + lead, end: lineEnd, heading: true });
-      start = lineEnd;
+      const raw = text.slice(line, lineEnd);
+      const marker = FENCE.exec(raw)?.[1];
+      if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) fence = fence ? '' : marker;
+      else if (!fence && HEADING.test(raw)) {
+        if (line > from) body(from, line - 1);
+        out.push({ start: line, end: lineEnd, heading: true });
+        from = lineEnd + 1;
+      }
+      line = lineEnd + 1;
     }
+    body(from, end);
   }
   return out;
 }
 
+// A paragraph with no content of its own: a "---", a lone fence line, an HTML comment, or a
+// one-line label such as "**Note:**" that only introduces what follows.
+const COMMENT = /<!--[\s\S]*?-->/g;
+const LABEL = /^[^\n]*:[*_ \t\r]*$/;
+function scrap(text: string) {
+  const rest = text.replace(COMMENT, '').trim();
+  return tokens(rest).length < 2 || LABEL.test(rest);
+}
+
+type Heading = { start: number; end: number; text: string };
+
 // Chunks plus the heading lines of their section, which only retrieve() needs.
 function sections(doc: Document) {
-  const chunks: { passage: Passage; headings: string[] }[] = [];
-  let headings: string[] = [];
+  const chunks: { passage: Passage; headings: Heading[] }[] = [];
+  let headings: Heading[] = [];
   const push = (start: number, end: number) => {
     const raw = doc.text.slice(start, end);
     const leading = raw.length - raw.trimStart().length;
     const text = raw.trim();
     if (text) chunks.push({ passage: { id: `${doc.id}:${start + leading}`, documentId: doc.id, title: doc.title, text, offset: start + leading, lexicalScore: 0 }, headings });
   };
-  let pending: { start: number; end: number } | null = null;
+  let pending: { start: number; end: number; body: boolean } | null = null;
   const flush = () => { if (pending) push(pending.start, pending.end); pending = null; };
   // Consecutive headings with no body yet (e.g. "# Title" then "## Section") accumulate.
   let open: { start: number; last: number; end: number } | null = null;
   for (const block of blocks(doc.text)) {
     if (block.heading) {
       flush();
-      const line = doc.text.slice(block.start, block.end).trim();
+      const line = { start: block.start, end: block.end, text: doc.text.slice(block.start, block.end).trim() };
       if (open) {
         headings.push(line);
         open.last = block.start;
@@ -96,22 +123,48 @@ function sections(doc: Document) {
       continue;
     }
     let start = block.start;
-    if (open && HEADING_IN_PASSAGE === 'question' && QUESTION.test(headings[headings.length - 1]) && (block.end - block.start > CHUNK_MAX || block.end - open.last <= CHUNK_MAX)) start = open.last;
+    if (open && HEADING_IN_PASSAGE === 'question' && QUESTION.test(headings[headings.length - 1].text) && (block.end - block.start > CHUNK_MAX || block.end - open.last <= CHUNK_MAX)) start = open.last;
     open = null;
-    if (block.end - start > CHUNK_MAX) {
-      flush();
-      for (const window of windows(doc.text, start, block.end)) push(window.start, window.end);
+    // Text before any heading merges short paragraphs up to CHUNK_TARGET, as it always has.
+    if (!headings.length) {
+      if (block.end - start > CHUNK_MAX) {
+        flush();
+        for (const window of windows(doc.text, start, block.end)) push(window.start, window.end);
+      } else if (pending && block.end - pending.start <= CHUNK_TARGET) pending.end = block.end;
+      else {
+        flush();
+        pending = { start, end: block.end, body: true };
+      }
       continue;
     }
-    if (pending && block.end - pending.start <= CHUNK_TARGET) pending.end = block.end;
-    else {
+    // Inside a Markdown section every paragraph is its own chunk: merged change-log entries
+    // dragged each other's P(supported) down. Scraps are the exception, since alone they would
+    // win BM25 for heading-only queries on length normalisation: a scrap joins the paragraph
+    // before it (or, with none yet, the one after it) within CHUNK_MAX. Two paragraphs with
+    // content never share a chunk.
+    const body = !scrap(doc.text.slice(block.start, block.end));
+    // Leading scraps start the first window; the last window stays open for trailing ones.
+    const from = pending && !pending.body ? pending.start : start;
+    if (block.end - from > CHUNK_MAX) {
+      if (from === start) flush();
+      const spans = [...windows(doc.text, from, block.end)];
+      for (const window of spans.slice(0, -1)) push(window.start, window.end);
+      pending = { ...spans[spans.length - 1], body: true };
+    } else if (pending && block.end - pending.start <= CHUNK_MAX && !(body && pending.body)) {
+      pending.end = block.end;
+      pending.body ||= body;
+    } else {
       flush();
-      pending = { start, end: block.end };
+      pending = { start, end: block.end, body };
     }
   }
   flush();
-  // Headings with no body before EOF become their own chunk, so no text disappears.
-  if (open) for (const window of open.end - open.start > CHUNK_MAX ? windows(doc.text, open.start, open.end) : [open]) push(window.start, window.end);
+  // Headings with no body before EOF become their own chunk(s), so no text disappears; their
+  // text is the passage, so BM25 adds nothing on top.
+  if (open) {
+    headings = [];
+    for (const window of open.end - open.start > CHUNK_MAX ? windows(doc.text, open.start, open.end) : [open]) push(window.start, window.end);
+  }
   return chunks;
 }
 
@@ -124,8 +177,9 @@ export function retrieve(documents: Document[], query: string, topK: number) {
   const chunks = sectioned.map((c) => c.passage);
   const terms = [...new Set(tokens(query))];
   const bags = sectioned.map(({ passage, headings }) => {
-    // Every chunk of a section counts its heading, unless the chunk text already shows it.
-    const words = [passage.text, ...headings.filter((h) => !passage.text.includes(h))].flatMap(tokens);
+    // Every chunk of a section counts its heading, unless the chunk shows (part of) it already.
+    const shown = (h: Heading) => h.end > passage.offset && h.start < passage.offset + passage.text.length;
+    const words = [passage.text, ...headings.filter((h) => !shown(h)).map((h) => h.text)].flatMap(tokens);
     const counts = new Map<string, number>();
     for (const word of words) counts.set(word, (counts.get(word) ?? 0) + 1);
     return { counts, length: words.length };

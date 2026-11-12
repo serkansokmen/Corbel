@@ -28,8 +28,15 @@ jobs:
       - name: Backend is not published and the UI is loopback only
         run: |
           docker compose -f docker/compose.yml ps
-          test -z "$(docker compose -f docker/compose.yml port backend 5177 2>/dev/null)"
-          docker compose -f docker/compose.yml port ui 3000 | grep -q '^127\.0\.0\.1:'
+          backend=$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$(docker compose -f docker/compose.yml ps -q backend)")
+          ui=$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$(docker compose -f docker/compose.yml ps -q ui)")
+          echo "backend ports: $backend"
+          echo "ui ports: $ui"
+          # No host binding for the backend, and only a loopback one for the UI.
+          ! echo "$backend" | grep -q '"HostPort"'
+          echo "$ui" | grep -q '"HostIp":"127.0.0.1"'
+          ! echo "$ui" | grep -q '"HostIp":"0.0.0.0"'
+          ! echo "$ui" | grep -q '"HostIp":"::"'
       # First start downloads about 800 MB of weights and loads them on CPU.
       - name: Wait for the model to report ready
         run: |

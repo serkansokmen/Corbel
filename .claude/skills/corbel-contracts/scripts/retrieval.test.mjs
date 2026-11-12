@@ -177,14 +177,64 @@ for (const v of variants) {
     const also = 'Feedback came from the March visitor survey.';
     const log = { id: 'log', title: 'Log.md', text: `Intro one.\n\nIntro two.\n\n## Version 1.1\n\n${fade}\n\n${sensors}\n\n## Why?\n\n${why}\n\n${also}` };
     assert.deepEqual(v.chunk(log).map((c) => c.text), ['Intro one.\n\nIntro two.', fade, sensors, mode === 'question' ? `## Why?\n\n${why}` : why, also]);
-    // Two paragraphs with content (three or more words, not a "Label:" line) never share a chunk inside a section.
-    const content = (p) => !/:[*_ \t\r]*$/.test(p.trim()) && (p.replace(/<!--[\s\S]*?-->/g, '').match(/[\p{L}\p{N}]+/gu) ?? []).length >= 3;
-    eachChunk(v, (doc, c, kinds, tail) => {
-      const first = headingSpans(doc.text)[0];
-      if (!first || c.offset < first.start || c.offset >= tail) return;
-      const body = kinds[0] ? c.text.slice(kinds[0].end - c.offset) : c.text;
-      assert.ok(body.trim().split(/\n[ \t\r]*\n/).filter(content).length <= 1, `${doc.id} @${c.offset} merges paragraphs inside a section`);
-    });
+  });
+
+  // Pinned cases instead of a second copy of scrap(): after a paragraph with content and with
+  // nothing following, a scrap joins it and anything with content stays its own chunk.
+  test(`[${mode}] only markup and short or emphasised labels are scraps`, () => {
+    const revert = 'Revert the release tag and redeploy the previous build from the archive.';
+    const scraps = ['---', '* * *', '<!-- todo: fill this in -->', '```', '```bash', '~~~', '**Note:**', '**Note**:', '__Tip:__', 'See also:', '**Warning (read first):**', '**To restart the kiosk, run these steps in order:**', 'Steps to restart the kiosk:',
+      '</details>', '<br>', '<hr>', '[TOC]', '[1]', '注意：'];
+    const content = [
+      'To restart the kiosk after a power cut, run these steps in order:', 'Run these three steps in order:', '- Done.', 'It is what it is.',
+      '以下の手順を順番に実行して、キオスクを再起動してください:', '以下の手順を順番に実行して、キオスクを再起動してください：',
+      '展示は午前十時に始まります。', 'Alice owns the API.', '**Note:** keep the old artifacts.', '<!-- todo -->\nCall the duty manager.'
+    ];
+    const texts = (p) => v.chunk({ id: 's', title: 'S.md', text: `## Section\n\n${revert}\n\n${p}` }).map((c) => c.text);
+    for (const p of scraps) assert.deepEqual(texts(p), [`${revert}\n\n${p}`], `scrap: ${p}`);
+    for (const p of content) assert.deepEqual(texts(p), [revert, p], `content: ${p}`);
+  });
+
+  test(`[${mode}] a label or opening fence joins the paragraph it introduces`, () => {
+    const revert = 'Revert the release tag and redeploy the previous build from the archive.';
+    const keep = 'Keep the old artifacts for at least a week after every release.';
+    const texts = (text) => v.chunk({ id: 'n', title: 'N.md', text }).map((c) => c.text);
+    assert.deepEqual(texts(`## Rollback\n\n${revert}\n\n**Note:**\n\n${keep}`), [revert, `**Note:**\n\n${keep}`]);
+    assert.deepEqual(texts(`## Build\n\n${revert}\n\n\`\`\`bash\n\nnpm ci\n\`\`\``), [revert, '```bash\n\nnpm ci\n```']);
+    assert.deepEqual(texts(`## Rollback\n\n${revert}\n\n**Note:**\n\n---\n\n${keep}`), [revert, `**Note:**\n\n---\n\n${keep}`]);
+    // A closing fence, a rule, a label before a heading or at EOF still join the paragraph before them.
+    assert.deepEqual(texts(`## Build\n\n\`\`\`bash\nnpm ci\n\n\`\`\`\n\n${keep}`), ['```bash\nnpm ci\n\n```', keep]);
+    assert.deepEqual(texts(`## Rollback\n\n${revert}\n\n---\n\n${keep}`), [`${revert}\n\n---`, keep]);
+    assert.deepEqual(texts(`## Rollback\n\n${revert}\n\n**Note:**\n\n## Next\n\n${keep}`), [`${revert}\n\n**Note:**`, keep]);
+    // When label and next paragraph would not fit CHUNK_MAX, the label stays with the one before.
+    const near = `${'Keep the archive. '.repeat(33)}Done.`;
+    assert.ok(near.length < CHUNK_MAX && near.length + 12 > CHUNK_MAX);
+    assert.deepEqual(texts(`## Rollback\n\n${revert}\n\n**Note:**\n\n${near}`), [`${revert}\n\n**Note:**`, near]);
+  });
+
+  test(`[${mode}] a paragraph under CHUNK_MAX is never windowed because of a leading scrap`, () => {
+    const comment = `<!-- ${'reviewed '.repeat(8)}-->`;
+    const near = `${'Keep the archive. '.repeat(33)}Done.`;
+    assert.ok(near.length <= CHUNK_MAX && comment.length + 2 + near.length > CHUNK_MAX);
+    assert.deepEqual(v.chunk({ id: 'w', title: 'W.md', text: `## Archive\n\n${comment}\n\n${near}` }).map((c) => c.text), [comment, near]);
+  });
+
+  test(`[${mode}] a scrap-only chunk gets no heading tokens, so it never wins a heading-only query`, () => {
+    const long = 'Revert the tag, redeploy the build and confirm the health checks. '.repeat(9).trim();
+    const comment = `<!-- ${'reviewed '.repeat(8)}-->`;
+    assert.ok(long.length <= CHUNK_MAX && long.length + 2 + comment.length > CHUNK_MAX);
+    const doc = { id: 'r4', title: 'R4.md', text: `## Rollback plan\n\n${long}\n\n${comment}` };
+    assert.deepEqual(v.chunk(doc).map((c) => c.text), [long, comment]);
+    assert.deepEqual(v.retrieve([doc], 'rollback plan', 8).passages.map((p) => p.text), [long]);
+  });
+
+  test(`[${mode}] one-word markup or a one-word paragraph never outranks the answer on a heading-only query`, () => {
+    const revert = 'Revert the release tag and redeploy the previous build from the archive.';
+    for (const p of ['</details>', '<br>', '<hr>', '[TOC]', '[1]', '注意：', 'Done.']) {
+      const { passages } = v.retrieve([{ id: 'm1', title: 'M1.md', text: `## Rollback plan\n\n${revert}\n\n${p}` }], 'rollback plan', 8);
+      assert.ok(passages.length > 0 && passages[0].text.startsWith(revert), `${p}: ${passages.map((x) => x.text).join(' | ')}`);
+      assert.ok(passages.every((x) => x.text.startsWith(revert)), `${p} gets heading tokens`);
+    }
   });
 
   test(`[${mode}] scraps in a section join a neighbour within CHUNK_MAX, so they never outrank the answer`, () => {
@@ -192,7 +242,8 @@ for (const v of variants) {
     const keep = 'Keep the old artifacts for at least a week after every release.';
     const texts = (text) => v.chunk({ id: 'rb', title: 'Rb.md', text }).map((c) => c.text);
     // Trailing scraps join the paragraph before them; with none yet, they join the one after.
-    assert.deepEqual(texts(`## Rollback plan\n\n${revert}\n\n---\n\n<!-- todo -->\n\n**Note:**\n\n${keep}`), [`${revert}\n\n---\n\n<!-- todo -->\n\n**Note:**`, keep]);
+    // A label introduces the next paragraph, so it joins that one.
+    assert.deepEqual(texts(`## Rollback plan\n\n${revert}\n\n---\n\n<!-- todo -->\n\n**Note:**\n\n${keep}`), [`${revert}\n\n---\n\n<!-- todo -->`, `**Note:**\n\n${keep}`]);
     assert.deepEqual(texts(`## Rollback plan\n\n<!-- todo: fill this in -->\n\n**Warning (read first):**\n\n${revert}`), [`<!-- todo: fill this in -->\n\n**Warning (read first):**\n\n${revert}`]);
     assert.deepEqual(texts(`## Rollback plan\n\n${revert}\n\n---`), [`${revert}\n\n---`]);
     // Past CHUNK_TARGET (LF or CRLF), and after a windowed paragraph: the scrap still joins.

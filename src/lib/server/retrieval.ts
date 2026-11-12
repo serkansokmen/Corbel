@@ -59,9 +59,10 @@ function* windows(text: string, start: number, end: number) {
 
 // Paragraphs, with every heading line split off as its own block, so a heading needs no
 // blank line around it. Lines inside ``` or ~~~ fences are never headings (shell comments).
+// `fenced` is whether a fence is still open where the block ends.
 function blocks(text: string) {
-  const out: { start: number; end: number; heading: boolean }[] = [];
-  const body = (start: number, end: number) => { if (text.slice(start, end).trim()) out.push({ start, end, heading: false }); };
+  const out: { start: number; end: number; heading: boolean; fenced: boolean }[] = [];
+  const body = (start: number, end: number) => { if (text.slice(start, end).trim()) out.push({ start, end, heading: false, fenced: !!fence }); };
   let fence = '';
   for (const { start, end } of paragraphs(text)) {
     let from = start;
@@ -73,7 +74,7 @@ function blocks(text: string) {
       if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) fence = fence ? '' : marker;
       else if (!fence && HEADING.test(raw)) {
         if (line > from) body(from, line - 1);
-        out.push({ start: line, end: lineEnd, heading: true });
+        out.push({ start: line, end: lineEnd, heading: true, fenced: false });
         from = lineEnd + 1;
       }
       line = lineEnd + 1;
@@ -83,14 +84,28 @@ function blocks(text: string) {
   return out;
 }
 
-// A paragraph with no content of its own: a "---", a lone fence line, an HTML comment, or a
-// one-line label such as "**Note:**" that only introduces what follows.
-const COMMENT = /<!--[\s\S]*?-->/g;
-const LABEL = /^[^\n]*:[*_ \t\r]*$/;
+// A paragraph with no content of its own: markup with no letters or digits once HTML comments
+// and tags are removed ("---", "<!-- todo -->", "</details>", a bare fence), a lone "[...]"
+// marker ("[TOC]", "[1]"), a lone fence line such as "```bash", or a one-line label that only
+// introduces what follows: up to three non-stopword words, and at most 20 characters when it
+// has no spaces (CJK), such as "See also:" or "注意：", or emphasised as a whole
+// ("**Warning (read first):**"). A sentence ending in ":" is content.
+const MARKUP = /<!--[\s\S]*?-->|<\/?[A-Za-z][^>]*>/g;
+const MARKER = /^\[[^\]\n]*\]$/;
+const FENCE_LINE = /^(?:`{3,}[^`\n]*|~{3,}[^\n]*)$/;
+const LABEL = /^[^\n]*[:：][*_ \t\r]*$/;
+const EMPHASISED = /^(\*\*?|__?)[^\n]*[:：][ \t]*\1$/;
+const rest = (text: string) => text.replace(MARKUP, '').trim();
+const label = (r: string) => LABEL.test(r) && (EMPHASISED.test(r) || (tokens(r).length <= 3 && (/\s/.test(r) || r.length <= 20)));
 function scrap(text: string) {
-  const rest = text.replace(COMMENT, '').trim();
-  return tokens(rest).length < 2 || LABEL.test(rest);
+  const r = rest(text);
+  return !/[\p{L}\p{N}]/u.test(r) || MARKER.test(r) || FENCE_LINE.test(r) || label(r);
 }
+// A scrap that leads into the next paragraph: a label, or a fence line that opens a fence.
+const intro = (text: string, fenced: boolean) => {
+  const r = rest(text);
+  return label(r) || (fenced && FENCE_LINE.test(r));
+};
 
 type Heading = { start: number; end: number; text: string };
 
@@ -98,17 +113,20 @@ type Heading = { start: number; end: number; text: string };
 function sections(doc: Document) {
   const chunks: { passage: Passage; headings: Heading[] }[] = [];
   let headings: Heading[] = [];
-  const push = (start: number, end: number) => {
+  // A scrap-only chunk gets no heading tokens, so it never wins a heading-only query.
+  const push = (start: number, end: number, body = true) => {
     const raw = doc.text.slice(start, end);
     const leading = raw.length - raw.trimStart().length;
     const text = raw.trim();
-    if (text) chunks.push({ passage: { id: `${doc.id}:${start + leading}`, documentId: doc.id, title: doc.title, text, offset: start + leading, lexicalScore: 0 }, headings });
+    if (text) chunks.push({ passage: { id: `${doc.id}:${start + leading}`, documentId: doc.id, title: doc.title, text, offset: start + leading, lexicalScore: 0 }, headings: body ? headings : [] });
   };
   let pending: { start: number; end: number; body: boolean } | null = null;
-  const flush = () => { if (pending) push(pending.start, pending.end); pending = null; };
+  const flush = () => { if (pending) push(pending.start, pending.end, pending.body); pending = null; };
   // Consecutive headings with no body yet (e.g. "# Title" then "## Section") accumulate.
   let open: { start: number; last: number; end: number } | null = null;
-  for (const block of blocks(doc.text)) {
+  const all = blocks(doc.text);
+  const isScrap = all.map((b) => !b.heading && scrap(doc.text.slice(b.start, b.end)));
+  for (const [i, block] of all.entries()) {
     if (block.heading) {
       flush();
       const line = { start: block.start, end: block.end, text: doc.text.slice(block.start, block.end).trim() };
@@ -140,17 +158,26 @@ function sections(doc: Document) {
     // Inside a Markdown section every paragraph is its own chunk: merged change-log entries
     // dragged each other's P(supported) down. Scraps are the exception, since alone they would
     // win BM25 for heading-only queries on length normalisation: a scrap joins the paragraph
-    // before it (or, with none yet, the one after it) within CHUNK_MAX. Two paragraphs with
-    // content never share a chunk.
-    const body = !scrap(doc.text.slice(block.start, block.end));
+    // before it (or, with none yet, the one after it) within CHUNK_MAX. A scrap that leads
+    // into what follows (a label, an opening fence) joins the next paragraph instead when one
+    // follows in the same section and they fit, or that paragraph is windowed anyway. Two
+    // paragraphs with content never share a chunk.
+    const body = !isScrap[i];
     // Leading scraps start the first window; the last window stays open for trailing ones.
     const from = pending && !pending.body ? pending.start : start;
-    if (block.end - from > CHUNK_MAX) {
+    let forward = false;
+    if (!body && pending?.body && intro(doc.text.slice(block.start, block.end), block.fenced)) {
+      let next = i + 1;
+      while (next < all.length && isScrap[next]) next++;
+      const target = all[next];
+      forward = !!target && !target.heading && (target.end - start <= CHUNK_MAX || target.end - target.start > CHUNK_MAX);
+    }
+    if (block.end - start > CHUNK_MAX) {
       if (from === start) flush();
       const spans = [...windows(doc.text, from, block.end)];
       for (const window of spans.slice(0, -1)) push(window.start, window.end);
       pending = { ...spans[spans.length - 1], body: true };
-    } else if (pending && block.end - pending.start <= CHUNK_MAX && !(body && pending.body)) {
+    } else if (pending && !forward && block.end - pending.start <= CHUNK_MAX && !(body && pending.body)) {
       pending.end = block.end;
       pending.body ||= body;
     } else {
@@ -177,9 +204,11 @@ export function retrieve(documents: Document[], query: string, topK: number) {
   const chunks = sectioned.map((c) => c.passage);
   const terms = [...new Set(tokens(query))];
   const bags = sectioned.map(({ passage, headings }) => {
-    // Every chunk of a section counts its heading, unless the chunk shows (part of) it already.
+    // Every chunk of a section counts its heading, unless the chunk shows (part of) it already
+    // or has fewer than two words of its own (a "Done." would win heading-only queries).
     const shown = (h: Heading) => h.end > passage.offset && h.start < passage.offset + passage.text.length;
-    const words = [passage.text, ...headings.filter((h) => !shown(h)).map((h) => h.text)].flatMap(tokens);
+    const own = tokens(passage.text);
+    const words = own.length < 2 ? own : [...own, ...headings.filter((h) => !shown(h)).flatMap((h) => tokens(h.text))];
     const counts = new Map<string, number>();
     for (const word of words) counts.set(word, (counts.get(word) ?? 0) + 1);
     return { counts, length: words.length };

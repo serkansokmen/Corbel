@@ -24,7 +24,7 @@ Laya 0.3.5 (English checkpoint, ModernBERT encoder + decision head), CUDA
 
 Pipeline steps:
 
-1. **Chunk.** Documents are split on paragraph boundaries (LF or CRLF). A Markdown heading line (`#` to `######`, outside code fences, blank line around it optional) starts a new section, and sections never share a chunk. Within a section, each paragraph is its own chunk, however short. The exception is scraps with no content of their own (a `---`, a lone fence line, an HTML comment, a one-line label such as `**Note:**`): a scrap joins the paragraph before it, or the one after it when it comes first, within 600 characters. Text before the first heading (or in a document with no headings) merges short paragraphs up to about 320 characters. A blank line splits paragraphs everywhere, including inside code fences and between list items. Paragraphs over 600 characters are windowed at sentence boundaries with an 80-character overlap. By default the heading is not part of the passage text; it only helps BM25 match every chunk of its section. Setting `HEADING_IN_PASSAGE` to `'question'` starts a section's first chunk at its heading when the heading ends in `?`: heading and first paragraph together when they fit 600 characters, and the first window when that paragraph is longer than 600 and gets windowed anyway. A heading with no body before the end of the document becomes its own chunk. Every chunk is an exact slice of the source and keeps its character offset. See `src/lib/server/retrieval.ts`.
+1. **Chunk.** Documents are split on paragraph boundaries (LF or CRLF). A Markdown heading line (`#` to `######`, outside code fences, blank line around it optional) starts a new section, and sections never share a chunk. Within a section, each paragraph is its own chunk, however short. The exception is scraps with no content of their own: markup with no letters or digits once HTML comments and tags are removed (a `---`, `<!-- todo -->`, `</details>`, a bare fence), a lone `[...]` marker such as `[TOC]`, a lone fence line such as ```` ```bash ````, or a one-line label ending in `:` or `：` that has at most three non-stopword words and, without spaces (as in CJK text), at most 20 characters (`See also:`, `注意：`), or is emphasised as a whole (`**Warning (read first):**`). A sentence ending in `:` is content. A scrap joins the paragraph before it, or the one after it when it comes first, within 600 characters; a label or an opening fence joins the paragraph after it instead when one follows in the same section and either both fit in 600 characters or that paragraph is over 600 and gets windowed (the label then starts its first window). A scrap that fits nowhere stays its own chunk, and it, like any chunk with fewer than two words of its own, gets no heading words for BM25. Text before the first heading (or in a document with no headings) merges short paragraphs up to about 320 characters. A blank line splits paragraphs everywhere, including inside code fences and between list items. Paragraphs over 600 characters are windowed at sentence boundaries with an 80-character overlap. By default the heading is not part of the passage text; it only helps BM25 match every chunk of its section. Setting `HEADING_IN_PASSAGE` to `'question'` starts a section's first chunk at its heading when the heading ends in `?`: heading and first paragraph together when they fit 600 characters, and the first window when that paragraph is longer than 600 and gets windowed anyway. A heading with no body before the end of the document becomes its own chunk. Every chunk is an exact slice of the source and keeps its character offset. See `src/lib/server/retrieval.ts`.
 2. **Retrieve.** BM25 over the chunks with a small English stopword list. Top-K candidates go to the backend: the UI offers 2, 4, 6 or 8, and `/api/query` accepts any integer from 1 to 8. This is a lexical baseline; paraphrases can be missed.
 3. **Score.** The backend asks Laya one typed choice question per passage: does the passage explicitly contain enough information to answer the query? Options are `supported`, `partial`, `irrelevant`. All passages are batched into one forward pass.
 4. **Decide.** The UI accepts passages whose P(supported) meets the threshold slider (0.50 to 0.99). Threshold changes re-evaluate the current run instantly without another inference call.
@@ -43,7 +43,7 @@ Requirements: Windows, Python 3.12 (`uv` or `py` launcher), a current NVIDIA dri
 ./scripts/setup-backend.ps1 -Device cuda -Model english
 ```
 
-The script creates `.backend-venv`, installs PyTorch and `backend/requirements.txt`, runs a CUDA smoke test that prints the GPU name and compute capability, and writes `.backend.env` with a random 32-byte shared key. When the UI runs on the same machine, `./corbel.ps1` copies that key into `.env` for you. Copy `LAYA_API_KEY` by hand only when SvelteKit runs on a different machine.
+The script creates `.backend-venv`, installs PyTorch and `backend/requirements.txt`, runs a CUDA smoke test that prints the GPU name and compute capability, and writes `.backend.env` with a random 32-byte shared key. When the UI runs on the same machine, `./corbel.ps1` copies that key into `.env` for you. If `LAYA_API_KEY` or `LAYA_PORT` is set in the shell that runs it, that value wins over `.backend.env` (as it does in the backend) and is the one written to `.env`. Copy `LAYA_API_KEY` by hand only when SvelteKit runs on a different machine.
 
 Setup runs once. After that, `./corbel.ps1` is the only command you need: it starts the backend, waits for the model to report ready, then runs the UI in the foreground. Ctrl+C stops both. Before starting the UI it creates `.env` from `.env.example` if it is missing and writes `LAYA_BACKEND_URL=http://127.0.0.1:<LAYA_PORT>` and the `LAYA_API_KEY` from `.backend.env` into it, so a one-machine setup needs no manual `.env` editing. The key is never printed. `-BackendOnly` and `-Stop` do not write `LAYA_BACKEND_URL` or `LAYA_API_KEY`.
 
@@ -51,7 +51,7 @@ Setup runs once. After that, `./corbel.ps1` is the only command you need: it sta
 ./corbel.ps1
 ```
 
-Useful flags: `-Model multilingual` switches the checkpoint and records it in both env files, `-BackendOnly` leaves the backend running without the UI, `-Stop` kills whatever is on either port, and `-NoBrowser` skips opening a tab. `corbel.bat` wraps the same script for double-clicking.
+Useful flags: `-Model multilingual` switches the checkpoint and records it in both env files (if a backend is already running, the script reuses it and warns that it still serves the old checkpoint; run `-Stop` first), `-BackendOnly` leaves the backend running without the UI, `-Stop` kills whatever is on either port, and `-NoBrowser` skips opening a tab. `corbel.bat` wraps the same script for double-clicking.
 
 On first start it downloads about 800 MB of weights into the Hugging Face cache, warms up with one inference, and reports `ready` on `GET /health`. The backend refuses to bind to a non-loopback address without a key of at least 32 characters, refuses the placeholder key that older copies of `.backend.env.example` shipped (on any address), and it refuses to fall back to CPU silently when `LAYA_DEVICE=cuda`.
 
@@ -72,7 +72,7 @@ Skip the copy on a one-machine setup: `./corbel.ps1` creates `.env` and fills in
 |---|---|
 | `LAYA_BACKEND_URL` | `http://WORKSTATION_IP:5177`, or `http://127.0.0.1:5177` when both run on one machine |
 | `LAYA_API_KEY` | Must match `LAYA_API_KEY` in the workstation's `.backend.env`. Never leaves the server side. |
-| `LAYA_MODEL` | Informational label shown in the UI |
+| `LAYA_MODEL` | Written by `corbel.ps1 -Model` for reference only. SvelteKit does not read it; the model label in the UI comes from the backend's `/health` |
 
 `./corbel.ps1` starts this for you. To run the UI on its own against a backend that is already up:
 
@@ -114,7 +114,7 @@ The header badge polls `/api/health` and shows `connected`, `loading`, `error`, 
 
 Endpoints:
 
-- `GET /health` returns `{ status, model, device, precision, gpu, message }`.
+- `GET /health` returns `{ status, model, device, precision, gpu, message }`. While the model is loading it has only `status`, `model` and `device`; after a failed load it has `status: "error"`, `model`, `device` and `message`. The UI's own `/api/health` adds `location` (`local` or `workstation`).
 - `POST /score` takes `{ query, passages[] }` with at most 8 passages of 1000 characters. Passages that exceed the model token budget are trimmed and flagged `truncated`. A second concurrent request gets `429` because inference is serialised on one GPU. Request bodies over 32 KB get `413`.
 
 ## Local CPU testing
@@ -137,7 +137,7 @@ With `LAYA_HOST=127.0.0.1` no API key is needed.
 
 - 30 documents, 50,000 characters each, 200,000 characters total, 1 MB request body. The production server (`node --env-file=.env build/index.js`) needs `BODY_SIZE_LIMIT=1M` for this; its default is 512 KB. These limits, and the question, Top-K and threshold limits below, live in `src/lib/limits.ts`, which `/api/query` and the evaluation scripts share.
 - Up to 8 candidate passages per question (the UI offers 2, 4, 6 or 8; the API accepts 1 to 8). Acceptance threshold 0.50 to 0.99.
-- Questions up to 500 characters. Document titles up to 150 characters.
+- Questions up to 500 characters. Document titles up to 150 characters. A question must also fit the model's token budget beside at least some passage text (about 300 tokens for question and passage together); a long question in a script that tokenises densely, such as CJK, can be rejected with `422` before it reaches 500 characters.
 - A library saved in this browser that is outside these limits (for example, hand-edited) is not loaded. The sample corpus is shown with a notice instead and replaces the saved library on the next save.
 - Runs are kept in browser storage, 20 most recent. Use Export runs for a JSON file that includes evaluated passages, scores, model revision, settings, and timings. Each run's `threshold` is the one stored with it (the threshold it was run at, or last reviewed at). Exporting a single run from the workbench also records the slider value on screen (`viewedThreshold`) and the ids of the passages accepted at it (`acceptedIds`).
 - The sample corpus describes a fictional exhibition installation. Sample documents are flagged in the library and can be removed.
@@ -168,6 +168,7 @@ src/lib/samples.ts        Sample corpus and example questions
 |---|---|
 | `npm run dev` | Vite dev server on 127.0.0.1 |
 | `npm run build` | Production build to `build/` |
+| `npm run preview` | Serves the production build through Vite on 127.0.0.1 |
 | `npm run check` | `svelte-check` type check |
 | `npm start` | Runs `corbel.ps1`: backend, readiness wait, then the UI |
 | `npm run backend` | Runs `corbel.ps1 -BackendOnly` |

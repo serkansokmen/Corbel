@@ -3,13 +3,16 @@
     Start Corbel: the Laya backend and the SvelteKit UI, from one command.
 
 .DESCRIPTION
-    Reads .backend.env for the port, key and model. Starts the backend, waits for
+    Reads .backend.env for the port, key and model. LAYA_PORT, LAYA_API_KEY and
+    LAYA_MODEL set in the process environment win over the file, as they do in
+    backend/serve.py. Starts the backend, waits for
     /health to report ready, then runs the UI in the foreground. Stopping the UI
     with Ctrl+C also stops the backend.
 
     Before starting the UI it creates .env from .env.example if missing, then
     writes LAYA_BACKEND_URL=http://127.0.0.1:<LAYA_PORT> and copies LAYA_API_KEY
-    from .backend.env into it, so a one-machine setup needs no manual copying.
+    into it (the values the backend will use, so an environment override is
+    copied too), so a one-machine setup needs no manual copying.
     -BackendOnly and -Stop do not write LAYA_BACKEND_URL or LAYA_API_KEY.
 
     Run ./scripts/setup-backend.ps1 once before the first start.
@@ -96,7 +99,17 @@ function Stop-Listener([int]$port, [string]$label) {
     }
 }
 
-$config = Read-EnvFile $configPath
+# backend/serve.py lets process environment variables win over .backend.env, so the launcher does too.
+function Read-BackendConfig {
+    $map = Read-EnvFile $configPath
+    foreach ($key in 'LAYA_PORT', 'LAYA_API_KEY', 'LAYA_MODEL') {
+        $value = [Environment]::GetEnvironmentVariable($key)
+        if ($value) { $map[$key] = $value }
+    }
+    return $map
+}
+
+$config = Read-BackendConfig
 $backendPort = 5177
 if ($config['LAYA_PORT']) { $backendPort = [int]$config['LAYA_PORT'] }
 
@@ -127,7 +140,12 @@ if (-not $BackendOnly) {
 if ($Model) {
     Set-EnvValue $configPath 'LAYA_MODEL' $Model
     Set-EnvValue $uiEnvPath 'LAYA_MODEL' $Model
-    $config = Read-EnvFile $configPath
+    # A LAYA_MODEL left in this shell would beat the file in the backend. Set it for the
+    # backend's start only, and restore the shell's own value afterwards.
+    $previousModelEnv = $env:LAYA_MODEL
+    $restoreModelEnv = $true
+    $env:LAYA_MODEL = $Model
+    $config = Read-BackendConfig
     Write-Host "Model set to $Model. The first start of a new checkpoint downloads its weights."
 }
 
@@ -137,14 +155,18 @@ $headers = @{}
 if ($config['LAYA_API_KEY']) { $headers['Authorization'] = 'Bearer ' + $config['LAYA_API_KEY'] }
 
 $backendProcess = $null
-$existingPid = Get-ListenerPid $backendPort
-if ($existingPid) {
-    Write-Host "Backend already listening on $backendPort (pid $existingPid). Reusing it."
-} else {
-    Write-Host "Starting Laya backend ($modelName) on 127.0.0.1:$backendPort"
-    $backendProcess = Start-Process -FilePath $pythonPath -ArgumentList '-m', 'backend.serve' `
-        -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru `
-        -RedirectStandardError $logPath -RedirectStandardOutput $outLogPath
+try {
+    $existingPid = Get-ListenerPid $backendPort
+    if ($existingPid) {
+        Write-Host "Backend already listening on $backendPort (pid $existingPid). Reusing it."
+    } else {
+        Write-Host "Starting Laya backend ($modelName) on 127.0.0.1:$backendPort"
+        $backendProcess = Start-Process -FilePath $pythonPath -ArgumentList '-m', 'backend.serve' `
+            -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru `
+            -RedirectStandardError $logPath -RedirectStandardOutput $outLogPath
+    }
+} finally {
+    if ($restoreModelEnv) { $env:LAYA_MODEL = $previousModelEnv }
 }
 
 $health = $null
@@ -173,6 +195,10 @@ while ($watch.Elapsed.TotalSeconds -lt $ReadyTimeoutSeconds) {
 
 if (-not $health) {
     throw "Backend did not report ready within $ReadyTimeoutSeconds seconds. See $logPath"
+}
+
+if ($existingPid -and $health.model -ne $modelName) {
+    Write-Warning "The backend that was already running serves '$($health.model)', not '$modelName'. Run ./corbel.ps1 -Stop, then start again to switch."
 }
 
 Write-Host ''

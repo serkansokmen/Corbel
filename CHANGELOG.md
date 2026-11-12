@@ -12,15 +12,17 @@ Notable changes to Corbel. The format follows [Keep a Changelog](https://keepach
 
 ### Changed
 - Chunking follows Markdown sections: a heading starts a new section, each paragraph inside a section is its own chunk, and headings are indexed for BM25 but not sent to Laya.
+- Inside a section only markup, lone fence lines and short or emphasised labels count as scraps; a label or opening fence joins the paragraph it introduces, and a scrap left on its own gets no heading words for BM25.
 - The production command reads `.env` and binds to `127.0.0.1`.
+- `corbel.ps1` lets `LAYA_PORT`, `LAYA_API_KEY` and `LAYA_MODEL` from the process environment win over `.backend.env`, as the backend does, and warns when a reused backend serves a different model than the one requested.
 - A single-run export keeps the stored threshold and adds the viewed threshold and the accepted passage ids.
+
+### Known issues
+- In a Markdown section whose whole answer is one word ("Yes.", "9000."), the question in the heading no longer retrieves that answer, because one-word chunks do not inherit heading words. Set `HEADING_IN_PASSAGE` to `'question'` for FAQ documents written that way.
 
 ### Fixed
 - The dev server's first page load took about 40 s because Vite watched the Python virtual environment.
 - The backend accepted the example placeholder key for a LAN bind.
-
-### Known issues
-- A one-line paragraph ending in a colon is treated as a label and merges into the previous paragraph.
 
 ## 0.1.0
 

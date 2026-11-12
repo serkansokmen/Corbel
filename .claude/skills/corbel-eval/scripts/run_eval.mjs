@@ -45,7 +45,11 @@ async function post(url, body) {
     const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(120_000) });
     const json = await response.json().catch(() => ({}));
     if (response.status === 429 && attempt < 6) { await new Promise((r) => setTimeout(r, 500 * (attempt + 1))); continue; }
-    if (!response.ok) throw new Error(`${response.status} ${json.detail ?? json.error ?? ''}`);
+    if (!response.ok) {
+      // FastAPI sends a string detail for its own errors and an array of objects for 422 validation errors.
+      const detail = json.detail ?? json.error ?? '';
+      throw new Error(`${response.status} ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
+    }
     return { ...json, wallMs: Math.round(performance.now() - started) };
   }
 }

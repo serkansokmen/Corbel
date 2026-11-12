@@ -5,6 +5,7 @@ Notable changes to Corbel. The format follows [Keep a Changelog](https://keepach
 ## Unreleased
 
 ### Added
+- Docker setup for a CPU-only Linux deployment (`docker/`): backend and UI containers, an optional Caddy proxy with HTTPS and a login, and a CI workflow that runs a query through the composed stack.
 - Apache-2.0 license, contributing guide, security policy, issue and pull request templates, and CI.
 - Handover-pack evaluation corpus with two labeled question sets (`eval/corpora/handover`, `eval/datasets/handover-v1*.jsonl`) and use-case scenarios (`docs/use-cases.md`).
 - Shared request limits in `src/lib/limits.ts`, used by `/api/query`, the UI and the eval scripts.

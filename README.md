@@ -133,6 +133,47 @@ $env:LAYA_DEVICE='cpu'; $env:LAYA_PRECISION='fp32'; $env:LAYA_HOST='127.0.0.1'; 
 
 With `LAYA_HOST=127.0.0.1` no API key is needed.
 
+## Docker (Linux server, no GPU)
+
+The `docker/` directory runs the backend and the UI as two containers on any machine with Docker, using the CPU build of PyTorch. It is the way to run Corbel on Linux or on a server. Expect a few hundred milliseconds to a few seconds per query on CPU, against about 20 ms on a GPU.
+
+```bash
+cp docker/.env.example docker/.env
+```
+
+Set `LAYA_API_KEY` in `docker/.env` to a random key of at least 32 characters (`openssl rand -hex 32` prints one), then:
+
+```bash
+docker compose -f docker/compose.yml up -d --build
+```
+
+The first start downloads about 800 MB of weights into the `model-cache` volume; the header badge shows `loading` until the model is ready. The UI is then at `http://localhost:3000`.
+
+What the compose file sets up:
+
+- **backend**: `LAYA_DEVICE=cpu`, `LAYA_PRECISION=fp32`. It is not published on the host; only the UI container reaches it, with the shared key.
+- **ui**: the production build (`node build`), published on `127.0.0.1` only. `UI_PORT` changes the host port.
+- **proxy** (optional, `--profile proxy`): Caddy with automatic HTTPS and a basic-auth login, for serving Corbel on your own domain.
+
+Configuration comes from `docker/.env`; the containers do not read `.env` or `.backend.env`. Plan for about 4 GB of memory for the backend container.
+
+### Serving it on a domain
+
+The UI has no login of its own, so do not publish port 3000 directly. Point the domain's DNS record at the server, open ports 80 and 443, and set these in `docker/.env`:
+
+| Variable | Value |
+|---|---|
+| `DOMAIN` | The host name, for example `corbel.example.com` |
+| `ORIGIN` | The same with its scheme: `https://corbel.example.com` |
+| `BASIC_AUTH_USER` | The login name |
+| `BASIC_AUTH_HASH` | The password hash, in single quotes. Create it with `docker run --rm caddy:2 caddy hash-password --plaintext 'your password'` |
+
+```bash
+docker compose -f docker/compose.yml --profile proxy up -d --build
+```
+
+Caddy obtains the certificate itself and puts every request, including `/api`, behind the login. Documents you load are kept in your browser and sent to this server for each query; they are not stored on it. If the domain is proxied through Cloudflare, set its SSL mode to Full (strict).
+
 ## Limits
 
 - 30 documents, 50,000 characters each, 200,000 characters total, 1 MB request body. The production server (`node --env-file=.env build/index.js`) needs `BODY_SIZE_LIMIT=1M` for this; its default is 512 KB. These limits, and the question, Top-K and threshold limits below, live in `src/lib/limits.ts`, which `/api/query` and the evaluation scripts share.
@@ -153,6 +194,7 @@ backend/app.py            FastAPI app, model loading, /health and /score
 backend/batch.py          Batched per-passage scoring using Laya internals
 backend/serve.py          Reads .backend.env and starts uvicorn
 scripts/setup-backend.ps1 Creates .backend-venv, installs torch + deps, writes .backend.env
+docker/                   Dockerfiles, compose file and Caddy config for a CPU-only Linux deployment
 corbel.ps1                Starts backend + UI, waits for ready, stops both on Ctrl+C
 src/lib/server/retrieval.ts  Chunking and BM25
 src/routes/api/query/+server.ts  Validation, retrieval, proxy to /score

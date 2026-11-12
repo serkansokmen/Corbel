@@ -1,0 +1,54 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    paths: ['docker/**', 'backend/**', 'src/**', 'package.json', 'package-lock.json', '.dockerignore', '.github/workflows/docker.yml']
+  pull_request:
+    paths: ['docker/**', 'backend/**', 'src/**', 'package.json', 'package-lock.json', '.dockerignore', '.github/workflows/docker.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write docker/.env
+        run: |
+          cp docker/.env.example docker/.env
+          sed -i "s/^LAYA_API_KEY=.*/LAYA_API_KEY=$(openssl rand -hex 32)/" docker/.env
+      - name: Compose file is valid, proxy profile included
+        run: docker compose -f docker/compose.yml --profile proxy config -q
+      - name: Build and start backend and UI
+        run: docker compose -f docker/compose.yml up -d --build
+      - name: Backend is not published and the UI is loopback only
+        run: |
+          docker compose -f docker/compose.yml ps
+          test -z "$(docker compose -f docker/compose.yml port backend 5177 2>/dev/null)"
+          docker compose -f docker/compose.yml port ui 3000 | grep -q '^127\.0\.0\.1:'
+      # First start downloads about 800 MB of weights and loads them on CPU.
+      - name: Wait for the model to report ready
+        run: |
+          for i in $(seq 1 120); do
+            status=$(curl -fsS http://127.0.0.1:3000/api/health | sed -n 's/.*"status":"\([a-z]*\)".*/\1/p' || true)
+            echo "[$i] ${status:-unreachable}"
+            [ "$status" = "ready" ] && exit 0
+            [ "$status" = "error" ] && break
+            sleep 5
+          done
+          docker compose -f docker/compose.yml logs --tail 80
+          exit 1
+      - name: A query returns scored evidence
+        run: |
+          curl -fsS http://127.0.0.1:3000/api/query -H 'content-type: application/json' \
+            -d '{"query":"How long are visitor captures stored?","threshold":0.8,"topK":2,"documents":[{"id":"capture","title":"capture.md","text":"Visitor captures are stored locally for 24 hours and then automatically deleted."}]}' \
+            | tee response.json
+          grep -q '"probability"' response.json
+          grep -q '"device":"cpu"' response.json
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f docker/compose.yml logs --tail 120

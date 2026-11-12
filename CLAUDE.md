@@ -12,3 +12,4 @@
 | 2026-10-20 | Contract map: shared `src/lib/limits.ts`, production env/bind rows, Run export threshold rule | corbel-contracts, corbel-eval, corbel-harness | Audit fixes B1, M1-M4 and minors |
 | 2026-10-20 | Contract map: UI side of Question length and Documents rows | corbel-contracts | UI guards and localStorage restore use limits.ts |
 | 2026-10-20 | Chunker config in run.json, conflict flips in compare, heading-quote warnings, both-sides recall@K | corbel-eval | Gaps found measuring heading-aware chunking (QA F6, F11) |
+| 2026-11-12 | Contract map: Env row covers the Docker setup (`docker/.env`, compose) | corbel-contracts | Docker deployment added |

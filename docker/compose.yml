@@ -1,0 +1,60 @@
+# Corbel on one machine without a GPU. From the repository root:
+#   cp docker/.env.example docker/.env      (then set LAYA_API_KEY)
+#   docker compose -f docker/compose.yml up -d --build
+# The UI listens on 127.0.0.1:3000 only. To serve it on a domain with HTTPS and a login,
+# also set DOMAIN, BASIC_AUTH_USER and BASIC_AUTH_HASH and add: --profile proxy
+name: corbel
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    environment:
+      LAYA_API_KEY: ${LAYA_API_KEY:?Set LAYA_API_KEY in docker/.env to a random key of at least 32 characters}
+      LAYA_MODEL: ${LAYA_MODEL:-english}
+      LAYA_REVISION: ${LAYA_REVISION:-}
+    volumes:
+      - model-cache:/data
+    # Not published: only the ui service reaches it, over the compose network.
+    expose:
+      - "5177"
+
+  ui:
+    build:
+      context: ..
+      dockerfile: docker/ui.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      LAYA_BACKEND_URL: http://backend:5177
+      LAYA_API_KEY: ${LAYA_API_KEY:?Set LAYA_API_KEY in docker/.env to a random key of at least 32 characters}
+      ORIGIN: ${ORIGIN:-http://localhost:3000}
+    ports:
+      - "127.0.0.1:${UI_PORT:-3000}:3000"
+
+  # HTTPS and a login in front of the UI, which has none of its own.
+  proxy:
+    image: caddy:2
+    profiles: ["proxy"]
+    restart: unless-stopped
+    depends_on:
+      - ui
+    environment:
+      DOMAIN: ${DOMAIN:-}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  model-cache:
+  caddy-data:
+  caddy-config:

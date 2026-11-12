@@ -11,6 +11,7 @@ Only the latest commit on `main` is supported; there are no maintained release b
 Corbel is a local tool for one user or a trusted LAN. Keep these points in mind when you deploy it:
 
 - **The UI server has no login.** Anyone who can reach it can send queries, and it attaches the server-held `LAYA_API_KEY` to them. Bind it to `127.0.0.1` (the README's production command does) unless everyone on the network is trusted.
+- **In the Docker setup the UI is published on `127.0.0.1` only and the backend is not published at all.** Use the `proxy` profile, or your own authenticating reverse proxy, to serve it on a domain.
 - **The backend requires a shared key for any non-loopback bind.** `setup-backend.ps1` generates a random one. The backend refuses the placeholder from `.backend.env.example`.
 - **Traffic between the UI server and the backend is plain HTTP.** Use it on a trusted network or through a tunnel; do not expose port 5177 to the internet.
 - **Documents stay in the browser's localStorage and are sent to the backend you configure.** Nothing is sent anywhere else. Model weights are downloaded from Hugging Face on first start; pin them with `LAYA_REVISION`.

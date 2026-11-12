@@ -20,7 +20,7 @@ npm run verify
 
 `npm run verify` runs the type check, the retrieval invariants and a backend contract smoke test against a fake model. It needs no model weights and no running services. CI runs the same command on every pull request.
 
-To run the whole app with the real model, follow the README. The launcher and setup scripts (`corbel.ps1`, `scripts/setup-backend.ps1`) are PowerShell and tested on Windows only. On Linux or macOS, start the backend with `python -m backend.serve` and the UI with `npm run dev`. Reports and fixes for other platforms are welcome.
+To run the whole app with the real model, follow the README. The launcher and setup scripts (`corbel.ps1`, `scripts/setup-backend.ps1`) are PowerShell and tested on Windows only. On Linux, the Docker setup in `docker/` runs the whole app on CPU (see the README). Without Docker on Linux or macOS, start the backend with `python -m backend.serve` and the UI with `npm run dev`. Reports and fixes for other platforms are welcome.
 
 ## How the project is laid out
 

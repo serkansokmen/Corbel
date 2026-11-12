@@ -1,0 +1,12 @@
+# Used by the "proxy" profile in compose.yml. Caddy obtains and renews the certificate for DOMAIN itself,
+# so ports 80 and 443 must reach this machine and DOMAIN's DNS record must point at it.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The UI has no login of its own. Everything, including /api, sits behind this one.
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	reverse_proxy ui:3000
+}

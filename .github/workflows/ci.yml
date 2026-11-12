@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      # The contract smoke test runs the FastAPI app against a fake model: no torch, weights or GPU.
+      - run: pip install "fastapi>=0.115,<1" "uvicorn>=0.34,<1"
+      - name: Type check, retrieval invariants, backend contract smoke
+        run: npm run verify
+      - name: Validate eval datasets
+        run: |
+          node .claude/skills/corbel-eval/scripts/validate_dataset.mjs --dataset eval/datasets/samples-seed.jsonl --corpus samples
+          node .claude/skills/corbel-eval/scripts/validate_dataset.mjs --dataset eval/datasets/handover-v1.jsonl --corpus eval/corpora/handover
+          node .claude/skills/corbel-eval/scripts/validate_dataset.mjs --dataset eval/datasets/handover-v1-conflicts.jsonl --corpus eval/corpora/handover,eval/corpora/handover-v1-conflicts
+      - run: npm run build

@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in Corbel behaves differently from the README or the UI.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got. Include the error text shown in the UI or terminal.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The question, the Top-K and threshold settings, and a document that shows the problem. Remove anything confidential first.
+    validations:
+      required: true
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Where
+      options:
+        - UI
+        - /api/query or /api/health
+        - Retrieval and chunking
+        - Backend (/score, /health, model loading)
+        - Launcher or setup scripts
+        - Eval scripts
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Node version, Python version, GPU and driver, LAYA_MODEL, LAYA_DEVICE, LAYA_PRECISION. For answer-quality bugs, attach the run from Export runs.
+      placeholder: "Windows 11, Node 22.18, Python 3.12, RTX 5090 / driver 616.92, english, cuda, bf16"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: backend.log excerpt
+      description: Never paste LAYA_API_KEY or the contents of .env / .backend.env.
+      render: text

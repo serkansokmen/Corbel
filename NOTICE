@@ -1,0 +1,7 @@
+Corbel
+Copyright 2026 Serkan Sokmen
+
+This product downloads the Laya model weights (convaiinnovations/laya, Apache-2.0)
+from Hugging Face at first start. The weights are not redistributed in this repository.
+
+The documents under eval/corpora/ and src/lib/samples.ts are fictional and written for this project.

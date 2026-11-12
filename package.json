@@ -1,6 +1,16 @@
 {
   "name": "corbel",
   "version": "0.1.0",
+  "description": "Local document Q&A workbench that cites verbatim passages judged by the Laya decision model, or abstains.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/serkansokmen/Corbel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/serkansokmen/Corbel/issues"
+  },
+  "homepage": "https://github.com/serkansokmen/Corbel#readme",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +19,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "start": "powershell -NoProfile -ExecutionPolicy Bypass -File corbel.ps1",
-    "backend": "powershell -NoProfile -ExecutionPolicy Bypass -File corbel.ps1 -BackendOnly"
+    "backend": "powershell -NoProfile -ExecutionPolicy Bypass -File corbel.ps1 -BackendOnly",
+    "verify": "node .claude/skills/corbel-contracts/scripts/verify.mjs"
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "^5.5.4",

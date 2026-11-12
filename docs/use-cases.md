@@ -18,7 +18,7 @@ Each scenario names who asks, what they ask, what a good answer looks like, what
 **Asks:** "Am I being filmed?", "Is it safe for children?", "How long do you keep my data?"
 **Good answer:** the privacy notice or FAQ sentence, quoted, so staff repeat the approved wording rather than paraphrasing a policy.
 **Today:** works when the question matches the FAQ body.
-**Gap:** FAQ documents put the question in a Markdown heading. The chunker glues each heading onto the previous section's chunk, so the question words point at the wrong answer.
+**Gap:** FAQ documents put the question in a Markdown heading. The original chunker glued each heading onto the previous section's chunk, so the question words pointed at the wrong answer. Section-aware chunking fixed the retrieval side (see Findings); the retrieved answers still often score just under the threshold.
 
 ## 3. Handover and compliance cross-check
 
@@ -63,22 +63,30 @@ Each scenario names who asks, what they ask, what a good answer looks like, what
 **Asks:** "When was the Restart Sensors button added?", "Is the backup fibre link installed?"
 **Gap:** documents carry no date or version metadata, so "the amendment says 60 days" and "the contract says 90 days" look like a conflict when one supersedes the other. The dataset verifier rejected exactly this case. A document date or version field, shown next to each quote and used to rank superseding sources, would separate conflicts from revisions.
 
-## Findings from the first handover evaluation
+## Findings from the handover evaluation
 
-Run on 2026-10-20: Laya english@7b928d8, RTX 5090 in bf16, topK 8. Every cell holds 1–5 questions, so all rates are directional.
+Two runs, both with Laya `english` on an RTX 5090 in bf16, topK 8, test split at the default 0.80 threshold. Every cell holds 1–11 questions, so all rates are directional.
 
-| | Sample seed set (16 q) | Handover pack (31 q) |
+- **Baseline (2026-10-20):** the original chunker, which merged short paragraphs and glued each Markdown heading onto the previous section.
+- **Current (2026-11-12):** section-aware chunking. A heading starts a new section, each paragraph in a section is its own chunk, and headings are indexed for BM25 but not sent to Laya. The Hugging Face revision moved from `7b928d8` to `85cc74d` between the runs; passage scores on unchanged text are bit-identical, so the differences below come from chunking.
+
+| Handover pack (31 q), test split | Baseline | Current |
 |---|---|---|
-| Test coverage at 0.80 | 2/5 | 4/10 |
-| False answers (unanswerable) | 0/3 | 1/4 |
-| Shown-evidence precision | 2/2 | 3/5 |
-| Recall@K, test | 4/5 | 8/11 |
-| Threshold chosen on calibration | 0.50 | 0.79 |
+| Coverage (answerable + paraphrased) | 4/10 | 4/10 |
+| False answers (unanswerable) | 1/4 | 1/4 |
+| Shown-evidence precision | 3/5 | 4/5 |
+| Recall@K | 8/11 | 10/11 |
+| Conflicts surfaced (natural, in this set) | 0/1 | 0/1 |
+| Conflicts surfaced (synthetic conflicts set, 6 q) | 1/3 | 2/3 |
+| Threshold chosen on calibration | 0.79 | 0.83 |
 
-A realistic corpus, with many near-miss passages, is much harder than the three-document sample. The chosen threshold moved from 0.50 to 0.79 between corpora. Choose it per corpus on calibration, and don't carry the number across.
+The three-document sample set is unchanged by the chunker (its documents have no headings): coverage 2/5, false answers 0/3, shown-evidence precision 2/2, recall@K 4/5, threshold chosen on calibration 0.50.
 
-- **Heading chunking (scenarios 1, 2).** 31 of the 37 `##` headings end the previous section's chunk, and all 7 FAQ questions are detached from their answers. This explains 2 of the 3 test retrieval misses. Heading-aware chunks raise test recall@K from 8/11 to 10/11. What Laya sees matters: question headings raise P(supported), while label headings ("## Term") lower it on identical text. The fix that helped in the probe uses headings for BM25 only, strips them before Laya, and moved shown-evidence precision from 3/5 to 4/5.
-- **Near-miss false answer (scenario 4).** "What phone number should staff dial?" accepted "sent to the support line … or by phone" at 0.861. The passage mentions phoning but gives no number. This is a Laya decision miss that no usable threshold fixes. Candidate fix: a `SUPPORT_QUESTION` wording that requires the specific value asked for.
-- **Conflicts (scenario 3).** No conflict was surfaced on the realistic pack. The FAQ's "one business day" scored 0.436 against the contract's 0.817, and the venue's 1000-nit cap sits at BM25 rank 20, beyond the 8-passage backend cap. A per-passage threshold can't surface conflicts. Scenario 3 needs its own decision rule and UI.
+A realistic corpus, with many near-miss passages, is much harder than the sample. The chosen threshold differs by corpus (0.50 against 0.79–0.83) and each value is set by a single calibration passage. Choose it per corpus on calibration, don't carry the number across, and keep the 0.80 default until each cell has about 30 questions.
+
+- **Heading chunking (scenarios 1, 2): fixed, with a retrieval gain only.** In the baseline, 31 of the 37 `##` headings ended the previous section's chunk and all 7 FAQ questions were detached from their answers, which explained 2 of the 3 test retrieval misses. Section-aware chunks recover both. Coverage did not move, because the recovered passages score just under the threshold. Showing Laya the heading is not neutral: question headings raise P(supported), label headings ("## Term") lower it on identical text, so headings are used for retrieval only.
+- **Near-miss false answer (scenario 4): open.** "What phone number should staff dial?" accepts "sent to the support line … or by phone" at 0.865. The passage mentions phoning but gives no number. This is a Laya decision miss that no usable threshold fixes. Candidate fix: a `SUPPORT_QUESTION` wording that requires the specific value asked for.
+- **Conflicts (scenario 3): open.** Neither natural conflict in the pack is surfaced. The FAQ's "one business day" scores 0.524 against the contract's 0.817, and the venue's 1000-nit cap is not among the 8 retrieved passages. A per-passage threshold can't surface conflicts. Scenario 3 needs its own decision rule and UI.
+- **Below-threshold answers (scenarios 1, 2, 4): open.** Five of the six remaining answerable and paraphrased test failures are correct passages that were retrieved but scored below 0.80. The sixth is a paraphrased question that shares no words with its answer, so BM25 never retrieves it.
 - **Synthetic-document artifact.** The same sentence scores 0.82 alone, 0.52 under a "# Title (fictional)" heading, and 0.24 with "This document is fictional." added. Synthetic conflict documents need neutral titles, or the contradictory category is measuring the title rather than the conflict.
-- **Noise floor.** The same passage text varies by about ±0.01 between batches in bf16, so thresholds and probabilities quoted to two decimals are below the noise.
+- **Noise floor.** The same passage text varies by about ±0.01 when it is scored in a different batch in bf16, so thresholds and probabilities quoted to two decimals are below the noise.

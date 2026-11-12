@@ -68,4 +68,4 @@ node .claude/skills/corbel-eval/scripts/validate_dataset.mjs --dataset eval/data
 
 ## AI coding agents
 
-The `.claude/` directory holds agent definitions and skills used to develop Corbel with Claude Code. They are optional. The scripts inside them are plain Node and Python and run without any agent.
+The `.claude/` directory holds agent definitions and skills used to develop Corbel with Claude Code. They are optional. The scripts inside them are plain Node and Python and run without any agent. [AGENTS.md](AGENTS.md) is a short orientation for any other coding agent.
